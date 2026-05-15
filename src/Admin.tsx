@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { type Quiz, type Question, type QuestionType } from './data';
+import { quizzes as staticQuizzes, type Quiz, type Question, type QuestionType } from './data';
 import { teamMembers } from './team';
 import { getQuizResults, saveQuiz, type Progress } from './api';
-import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Plus, Trash2, Save, ListChecks, FileText } from 'lucide-react';
+import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Plus, Trash2, Save, ListChecks, FileText, Edit3 } from 'lucide-react';
 
 interface AdminProps {
   onBack: () => void;
@@ -15,8 +15,8 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
   const [results, setResults] = useState<Progress[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Quiz Creation State
-  const [newQuiz, setNewQuiz] = useState<Quiz>({
+  // Quiz Editor State
+  const [activeQuiz, setActiveQuiz] = useState<Quiz>({
     id: `q-${new Date().toISOString().split('T')[0]}`,
     date: new Date().toISOString().split('T')[0],
     title: '',
@@ -42,6 +42,24 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
     }
   }, [selectedQuizId, activeTab]);
 
+  const loadQuizForEdit = () => {
+    const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
+    if (quizToEdit) {
+      setActiveQuiz(JSON.parse(JSON.stringify(quizToEdit))); // Deep copy
+      setActiveTab('create');
+    }
+  };
+
+  const resetEditor = () => {
+    setActiveQuiz({
+      id: `q-${new Date().toISOString().split('T')[0]}`,
+      date: new Date().toISOString().split('T')[0],
+      title: '',
+      description: '',
+      questions: []
+    });
+  };
+
   const addQuestion = (type: QuestionType) => {
     const q: Question = {
       id: Math.random().toString(36).substr(2, 9),
@@ -54,34 +72,36 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
       setupCode: type === 'short' ? '' : undefined,
       validationCode: type === 'short' ? '' : undefined
     };
-    setNewQuiz(prev => ({ ...prev, questions: [...prev.questions, q] }));
+    setActiveQuiz(prev => ({ ...prev, questions: [...prev.questions, q] }));
   };
 
   const removeQuestion = (id: string) => {
-    setNewQuiz(prev => ({ ...prev, questions: prev.questions.filter(q => q.id !== id) }));
+    setActiveQuiz(prev => ({ ...prev, questions: prev.questions.filter(q => q.id !== id) }));
   };
 
   const updateQuestion = (id: string, updates: Partial<Question>) => {
-    setNewQuiz(prev => ({
+    setActiveQuiz(prev => ({
       ...prev,
       questions: prev.questions.map(q => q.id === id ? { ...q, ...updates } : q)
     }));
   };
 
   const handleSaveQuiz = async () => {
-    if (!newQuiz.title || newQuiz.questions.length === 0) {
+    if (!activeQuiz.title || activeQuiz.questions.length === 0) {
       alert("제목과 최소 1개 이상의 문제를 입력해주세요.");
       return;
     }
     setLoading(true);
     try {
-      await saveQuiz(newQuiz);
-      alert("퀴즈가 성공적으로 저장되었습니다! 홈 화면에 즉시 반영됩니다.");
+      // Remove any undefined/null fields that Firestore might reject
+      const cleanedQuiz = JSON.parse(JSON.stringify(activeQuiz));
+      await saveQuiz(cleanedQuiz);
+      alert("퀴즈가 성공적으로 저장되었습니다!");
       setActiveTab('results');
-      setSelectedQuizId(newQuiz.id);
-    } catch (e) {
-      console.error(e);
-      alert("저장 중 오류가 발생했습니다.");
+      setSelectedQuizId(activeQuiz.id);
+    } catch (e: any) {
+      console.error("Save error:", e);
+      alert(`저장 실패: ${e.message || '알 수 없는 오류'}\n\nFirebase Console에서 Firestore 보안 규칙(Rules)이 'allow read, write: if true;'로 설정되어 있는지 확인해주세요.`);
     }
     setLoading(false);
   };
@@ -107,7 +127,10 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
             <ListChecks size={16} style={{display: 'inline', marginRight: 4, verticalAlign: 'middle'}}/> 결과 확인
           </button>
           <button 
-            onClick={() => setActiveTab('create')}
+            onClick={() => {
+              resetEditor();
+              setActiveTab('create');
+            }}
             style={{
               padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
               background: activeTab === 'create' ? 'var(--surface)' : 'transparent',
@@ -115,7 +138,7 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
               color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)'
             }}
           >
-            <Plus size={16} style={{display: 'inline', marginRight: 4, verticalAlign: 'middle'}}/> 문제 생성
+            <Plus size={16} style={{display: 'inline', marginRight: 4, verticalAlign: 'middle'}}/> 새 퀴즈
           </button>
         </div>
       </header>
@@ -135,6 +158,9 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
                     <option key={q.id} value={q.id}>{q.date} - {q.title}</option>
                   ))}
                 </select>
+                <button onClick={loadQuizForEdit} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}>
+                  <Edit3 size={18} /> 수정
+                </button>
                 <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}>
                   <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
                 </button>
@@ -214,33 +240,44 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
           <div style={{maxWidth: 720, margin: '0 auto'}}>
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
               <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}>
-                <FileText size={20} color="var(--primary)"/> 퀴즈 기본 정보
+                <FileText size={20} color="var(--primary)"/> 퀴즈 정보 수정
               </h2>
               <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                 <div>
                   <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>퀴즈 제목</label>
                   <input 
                     type="text" 
-                    value={newQuiz.title}
-                    onChange={(e) => setNewQuiz({...newQuiz, title: e.target.value})}
+                    value={activeQuiz.title}
+                    onChange={(e) => setActiveQuiz({...activeQuiz, title: e.target.value})}
                     placeholder="예: 2주차 파이썬 기초 점검"
                     style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}
                   />
                 </div>
-                <div>
-                  <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>날짜</label>
-                  <input 
-                    type="date" 
-                    value={newQuiz.date}
-                    onChange={(e) => setNewQuiz({...newQuiz, date: e.target.value, id: `q-${e.target.value}`})}
-                    style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}
-                  />
+                <div style={{display: 'flex', gap: 12}}>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>날짜</label>
+                    <input 
+                      type="date" 
+                      value={activeQuiz.date}
+                      onChange={(e) => setActiveQuiz({...activeQuiz, date: e.target.value, id: `q-${e.target.value}`})}
+                      style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}
+                    />
+                  </div>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>고유 ID (날짜 변경 시 자동 갱신)</label>
+                    <input 
+                      type="text" 
+                      value={activeQuiz.id}
+                      disabled
+                      style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', color: 'var(--text-tertiary)'}}
+                    />
+                  </div>
                 </div>
                 <div>
                   <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>상세 설명</label>
                   <textarea 
-                    value={newQuiz.description}
-                    onChange={(e) => setNewQuiz({...newQuiz, description: e.target.value})}
+                    value={activeQuiz.description}
+                    onChange={(e) => setActiveQuiz({...activeQuiz, description: e.target.value})}
                     placeholder="퀴즈에 대한 설명을 입력하세요."
                     style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, minHeight: 80}}
                   />
@@ -249,19 +286,19 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
             </div>
 
             <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
-              <h2 style={{fontSize: 18, fontWeight: 700}}>문제 리스트 ({newQuiz.questions.length})</h2>
+              <h2 style={{fontSize: 18, fontWeight: 700}}>문제 리스트 ({activeQuiz.questions.length})</h2>
               <div style={{display: 'flex', gap: 8}}>
                 <button onClick={() => addQuestion('multiple')} className="btn btn-secondary" style={{padding: '8px 12px', fontSize: 13}}>
-                  + 객관식
+                  + 객관식 추가
                 </button>
                 <button onClick={() => addQuestion('short')} className="btn btn-secondary" style={{padding: '8px 12px', fontSize: 13}}>
-                  + 주관식(코딩)
+                  + 주관식 추가
                 </button>
               </div>
             </div>
 
             <div style={{display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 40}}>
-              {newQuiz.questions.map((q, idx) => (
+              {activeQuiz.questions.map((q, idx) => (
                 <div key={q.id} style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', position: 'relative'}}>
                   <button 
                     onClick={() => removeQuestion(q.id)}
@@ -354,9 +391,9 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
               onClick={handleSaveQuiz}
               disabled={loading}
               className="btn btn-primary" 
-              style={{width: '100%', padding: 20, position: 'sticky', bottom: 0, boxShadow: '0 -8px 24px rgba(0,0,0,0.1)'}}
+              style={{width: '100%', padding: 20, position: 'sticky', bottom: 20, boxShadow: '0 8px 32px rgba(49, 130, 246, 0.3)', zIndex: 100}}
             >
-              {loading ? <RefreshCw className="animate-spin" /> : <><Save size={20} /> 퀴즈 배포하기</>}
+              {loading ? <RefreshCw className="animate-spin" /> : <><Save size={20} /> 퀴즈 저장하기</>}
             </button>
           </div>
         )}
