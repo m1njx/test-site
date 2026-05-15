@@ -153,7 +153,14 @@ export default function App() {
 
           {loggedInUser === ADMIN_ID ? (
             <button 
-              onClick={() => setCurrentView('admin')}
+              onClick={() => {
+                const pw = window.prompt("관리자 비밀번호를 입력하세요.");
+                if (pw === "030918") {
+                  setCurrentView('admin');
+                } else if (pw !== null) {
+                  alert("비밀번호가 올바르지 않습니다.");
+                }
+              }}
               className="btn btn-primary" 
               style={{width: '100%', marginBottom: 32, padding: 20}}
             >
