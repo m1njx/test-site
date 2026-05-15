@@ -15,7 +15,17 @@ declare global {
 }
 
 export default function App() {
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
+    return localStorage.getItem('aim_team_user');
+  });
+
+  useEffect(() => {
+    if (loggedInUser) {
+      localStorage.setItem('aim_team_user', loggedInUser);
+    } else {
+      localStorage.removeItem('aim_team_user');
+    }
+  }, [loggedInUser]);
   
   const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin'>('home');
   const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
@@ -169,18 +179,19 @@ export default function App() {
             {dynamicQuizzes.map((q) => {
               const p = studentProgress.find(p => p.quizId === q.id);
               const isCompleted = !!p;
+              const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID);
               
               return (
                 <div 
                   key={q.id} 
-                  className={`quiz-card ${q.questions.length === 0 ? 'disabled' : ''}`}
-                  onClick={() => startQuiz(q)}
+                  className={`quiz-card ${isLocked ? 'disabled' : ''}`}
+                  onClick={() => !isLocked && startQuiz(q)}
                   style={isCompleted ? {borderColor: 'rgba(39, 174, 96, 0.4)'} : {}}
                 >
                   <div className="quiz-info">
-                    <div className="quiz-date" style={{color: isCompleted ? '#27AE60' : 'var(--primary)'}}>
+                    <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? '#27AE60' : 'var(--primary)')}}>
                       <Calendar size={12} style={{display: 'inline', marginRight: 4, verticalAlign: 'middle', marginTop: '-2px'}}/>
-                      {q.date} {isCompleted && '✓ 완료됨'}
+                      {q.date} {isCompleted && '✓ 완료됨'} {q.isPublished === false && '(비공개)'}
                     </div>
                     <h3 className="quiz-name">{q.title}</h3>
                     <p className="quiz-desc">{q.description}</p>
