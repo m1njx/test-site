@@ -178,10 +178,19 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             <div style={{fontSize: 14, fontWeight: 600, flex: 1}}>{q.title}</div>
                             {isCorrect ? <CheckCircle2 size={16} color="#27AE60" /> : <AlertCircle size={16} color="#E74C3C" />}
                           </div>
-                          {q.type === 'short' && (
+                          {q.type === 'short' ? (
                             <div style={{marginTop: 8, fontSize: 13}}>
                               <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
                               <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 12, overflowX: 'auto', fontFamily: 'monospace'}}>{studentAns || '(답변 없음)'}</pre>
+                            </div>
+                          ) : (
+                            <div style={{marginTop: 8, fontSize: 13}}>
+                              <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
+                              <div style={{padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 13, fontWeight: 500}}>
+                                {Array.isArray(studentAns) 
+                                  ? studentAns.map(idx => q.options?.[parseInt(idx)]).join(', ') 
+                                  : (typeof studentAns === 'string' ? q.options?.[parseInt(studentAns)] : '(답변 없음)')}
+                              </div>
                             </div>
                           )}
                         </div>

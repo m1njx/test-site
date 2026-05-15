@@ -175,9 +175,7 @@ export default function App() {
     setResults(gradingResults);
     const fullResults: Record<string, any> = { ...gradingResults };
     questions.forEach(q => {
-      if (q.type === 'short') {
-        fullResults[`ans_${q.id}`] = answers[q.id];
-      }
+      fullResults[`ans_${q.id}`] = answers[q.id];
     });
 
     try {
