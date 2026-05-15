@@ -1,5 +1,6 @@
 import { db, isMock } from './firebase';
 import { collection, setDoc, getDocs, doc, query, where } from 'firebase/firestore';
+import type { Quiz } from './data';
 
 // In-memory DB for when Firebase is not configured yet
 const MOCK_DB: any = {
@@ -103,5 +104,32 @@ export async function getQuizResults(quizId: string): Promise<Progress[]> {
   } catch (error) {
     console.error("Error getting quiz results:", error);
     return cached ? cached.data : [];
+  }
+}
+
+export async function getQuizzes(): Promise<Quiz[]> {
+  try {
+    if (isMock) return [];
+    if (!db) return [];
+    
+    const snap = await getDocs(collection(db, 'quizzes'));
+    if (snap.empty) return [];
+    return snap.docs.map(d => d.data() as Quiz).sort((a, b) => b.date.localeCompare(a.date));
+  } catch (error) {
+    console.error("Error getting quizzes:", error);
+    return [];
+  }
+}
+
+export async function saveQuiz(quiz: Quiz) {
+  if (isMock) return;
+  if (!db) return;
+  
+  try {
+    const docRef = doc(db, 'quizzes', quiz.id);
+    await setDoc(docRef, quiz);
+  } catch (error) {
+    console.error("Error saving quiz:", error);
+    throw error;
   }
 }

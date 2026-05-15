@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Check, ChevronRight, RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, getStudentName } from './team';
-import { saveScore, getStudentProgress, type Progress } from './api';
+import { saveScore, getStudentProgress, getQuizzes, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import './index.css';
@@ -18,7 +18,18 @@ export default function App() {
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   
   const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin'>('home');
+  const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
+
+  useEffect(() => {
+    const loadQuizzes = async () => {
+      const qs = await getQuizzes();
+      if (qs.length > 0) {
+        setDynamicQuizzes(qs);
+      }
+    };
+    loadQuizzes();
+  }, []);
 
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
@@ -74,7 +85,7 @@ export default function App() {
   }
 
   if (currentView === 'admin') {
-    return <Admin onBack={() => setCurrentView('home')} />;
+    return <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} />;
   }
 
   const startQuiz = (quiz: Quiz) => {
@@ -100,7 +111,7 @@ export default function App() {
   };
 
   if (currentView === 'home') {
-    const validQuizzes = quizzes.filter(q => q.questions.length > 0);
+    const validQuizzes = dynamicQuizzes.filter(q => q.questions.length > 0);
     const completionRate = validQuizzes.length > 0 ? Math.round((studentProgress.length / validQuizzes.length) * 100) : 0;
 
     return (
@@ -147,7 +158,7 @@ export default function App() {
           <p className="home-subtitle">날짜별로 할당된 문제를 풀고 실력을 점검하세요.</p>
           
           <div className="quiz-list">
-            {quizzes.map((q) => {
+            {dynamicQuizzes.map((q) => {
               const p = studentProgress.find(p => p.quizId === q.id);
               const isCompleted = !!p;
               
