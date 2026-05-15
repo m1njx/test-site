@@ -24,9 +24,16 @@ export default function App() {
   useEffect(() => {
     const loadQuizzes = async () => {
       const qs = await getQuizzes();
-      if (qs.length > 0) {
-        setDynamicQuizzes(qs);
-      }
+      // 기존 정적 퀴즈와 Firestore의 동적 퀴즈를 합칩니다 (ID 중복 방지)
+      setDynamicQuizzes(prev => {
+        const merged = [...qs];
+        quizzes.forEach(sq => {
+          if (!merged.find(mq => mq.id === sq.id)) {
+            merged.push(sq);
+          }
+        });
+        return merged.sort((a, b) => b.date.localeCompare(a.date));
+      });
     };
     loadQuizzes();
   }, []);
