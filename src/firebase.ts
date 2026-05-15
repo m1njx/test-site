@@ -1,18 +1,19 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
-// TODO: 파이어베이스 프로젝트를 생성한 후 아래 설정값을 실제 값으로 변경해주세요!
+// Firebase configuration using Vite env variables (prefixed with VITE_)
 const firebaseConfig = {
-  apiKey: "AIzaSyDUwHZQwA7_1IaUIt7RFicO7GV6ekXhy0Q",
-  authDomain: "test-site-666b3.firebaseapp.com",
-  projectId: "test-site-666b3",
-  storageBucket: "test-site-666b3.firebasestorage.app",
-  messagingSenderId: "35645918205",
-  appId: "1:35645918205:web:d25d2ba7afddb579432794",
-  measurementId: "G-XQST0PCH8C"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-export const isMock = firebaseConfig.apiKey === "YOUR_API_KEY";
+// If any required env var is missing, treat as mock (no real Firebase connection)
+export const isMock = !firebaseConfig.apiKey;
 
 let app;
 let db: any = null;
