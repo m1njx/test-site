@@ -14,9 +14,20 @@ export interface Progress {
   timestamp: number;
 }
 
+// Cache for Firebase results to improve performance
+const FIREBASE_CACHE: {
+  progress: Record<string, { data: Progress[], timestamp: number }>,
+  quizResults: Record<string, { data: Progress[], timestamp: number }>
+} = {
+  progress: {},
+  quizResults: {}
+};
+
+const CACHE_TTL = 1000 * 30; // 30 seconds cache
+
 export async function saveScore(studentId: string, quizId: string, score: number, total: number) {
   if (!studentId || !quizId) return;
-  if (studentId === 'admin') return; // Admin doesn't save scores
+  if (studentId === 'admin') return;
   
   const data: Progress = { studentId, quizId, score, total, timestamp: Date.now() };
   
@@ -30,6 +41,10 @@ export async function saveScore(studentId: string, quizId: string, score: number
     
     const docRef = doc(db, 'progress', `${studentId}_${quizId}`);
     await setDoc(docRef, data);
+
+    // Invalidate/Update cache
+    delete FIREBASE_CACHE.progress[studentId];
+    delete FIREBASE_CACHE.quizResults[quizId];
   } catch (error) {
     console.error("Error saving score:", error);
     throw error;
@@ -39,6 +54,12 @@ export async function saveScore(studentId: string, quizId: string, score: number
 export async function getStudentProgress(studentId: string): Promise<Progress[]> {
   if (!studentId) return [];
   
+  // Return cached data if available and fresh
+  const cached = FIREBASE_CACHE.progress[studentId];
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    return cached.data;
+  }
+
   try {
     if (isMock) {
       return [...MOCK_DB.progress.filter((p: any) => p.studentId === studentId)];
@@ -47,16 +68,25 @@ export async function getStudentProgress(studentId: string): Promise<Progress[]>
     if (!db) return [];
     const q = query(collection(db, 'progress'), where('studentId', '==', studentId));
     const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as Progress);
+    const data = snap.docs.map(d => d.data() as Progress);
+    
+    // Update cache
+    FIREBASE_CACHE.progress[studentId] = { data, timestamp: Date.now() };
+    return data;
   } catch (error) {
     console.error("Error getting student progress:", error);
-    return [];
+    return cached ? cached.data : [];
   }
 }
 
 export async function getQuizResults(quizId: string): Promise<Progress[]> {
   if (!quizId) return [];
   
+  const cached = FIREBASE_CACHE.quizResults[quizId];
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+    return cached.data;
+  }
+
   try {
     if (isMock) {
       return [...MOCK_DB.progress.filter((p: any) => p.quizId === quizId)];
@@ -65,9 +95,12 @@ export async function getQuizResults(quizId: string): Promise<Progress[]> {
     if (!db) return [];
     const q = query(collection(db, 'progress'), where('quizId', '==', quizId));
     const snap = await getDocs(q);
-    return snap.docs.map(d => d.data() as Progress);
+    const data = snap.docs.map(d => d.data() as Progress);
+    
+    FIREBASE_CACHE.quizResults[quizId] = { data, timestamp: Date.now() };
+    return data;
   } catch (error) {
     console.error("Error getting quiz results:", error);
-    return [];
+    return cached ? cached.data : [];
   }
 }
