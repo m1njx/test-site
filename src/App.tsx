@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, ChevronRight, RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
-import { ADMIN_ID, getStudentName } from './team';
-import { saveScore, getStudentProgress, getQuizzes, type Progress } from './api';
+import { ADMIN_ID, getStudentName, type Student } from './team';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import './index.css';
@@ -29,7 +29,13 @@ export default function App() {
   
   const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin'>('home');
   const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
+  const [dynamicTeam, setDynamicTeam] = useState<Student[]>([]);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
+
+  const loadTeam = async () => {
+    const students = await getStudents();
+    setDynamicTeam(students);
+  };
 
   const loadQuizzes = async () => {
     const qs = await getQuizzes();
@@ -54,7 +60,17 @@ export default function App() {
 
   useEffect(() => {
     loadQuizzes();
+    loadTeam();
   }, []);
+
+  const enterAdmin = () => {
+    const password = window.prompt("관리자 비밀번호를 입력해주세요.");
+    if (password === "030918") {
+      setCurrentView('admin');
+    } else {
+      alert("비밀번호가 틀렸습니다.");
+    }
+  };
 
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
@@ -106,11 +122,19 @@ export default function App() {
   }, [loggedInUser, currentView]);
 
   if (!loggedInUser) {
-    return <Login onLogin={setLoggedInUser} />;
+    return <Login onLogin={setLoggedInUser} dynamicTeam={dynamicTeam} />;
   }
 
   if (currentView === 'admin') {
-    return <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} onRefresh={loadQuizzes} />;
+    return (
+      <Admin 
+        onBack={() => setCurrentView('home')} 
+        dynamicQuizzes={dynamicQuizzes} 
+        onRefresh={loadQuizzes} 
+        dynamicTeam={dynamicTeam}
+        onRefreshTeam={loadTeam}
+      />
+    );
   }
 
   const startQuiz = (quiz: Quiz) => {
@@ -144,7 +168,7 @@ export default function App() {
         <div className="home-container" style={{paddingTop: 24}}>
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24}}>
             <div style={{fontWeight: 700, color: 'var(--text-secondary)'}}>
-              안녕하세요, <span style={{color: 'var(--primary)'}}>{getStudentName(loggedInUser)}</span>님
+              안녕하세요, <span style={{color: 'var(--primary)'}}>{getStudentName(loggedInUser, dynamicTeam)}</span>님
             </div>
             <button onClick={handleLogout} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4}}>
               <LogOut size={16} /> 로그아웃
@@ -153,14 +177,7 @@ export default function App() {
 
           {loggedInUser === ADMIN_ID ? (
             <button 
-              onClick={() => {
-                const pw = window.prompt("관리자 비밀번호를 입력하세요.");
-                if (pw === "030918") {
-                  setCurrentView('admin');
-                } else if (pw !== null) {
-                  alert("비밀번호가 올바르지 않습니다.");
-                }
-              }}
+              onClick={enterAdmin}
               className="btn btn-primary" 
               style={{width: '100%', marginBottom: 32, padding: 20}}
             >

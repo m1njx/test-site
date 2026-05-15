@@ -3,22 +3,15 @@ export interface Student {
   name: string;
 }
 
-// TODO: 관리자용 학번을 지정하세요 (본인의 학번)
+// 관리자용 학번 (강민제님)
 export const ADMIN_ID = "22360002";
 
-// TODO: 팀원들의 학번과 이름을 등록하세요
-export const teamMembers: Student[] = [
-  { id: '22660046', name: '조윤경' },
-  { id: '22690007', name: '김휘성' },
-  { id: '22660024', name: '도영준' },
-  { id: '22660009', name: '김도연' },
-  { id: '22660034', name: '신은결' },
-  { id: '22660016', name: '김우솔' },
-  { id: '22660052', name: '하준오' },
+// 팀원 목록은 이제 Firestore에서 동적으로 관리합니다.
+// 초기 마이그레이션을 위해 빈 배열로 설정합니다.
+export const teamMembers: Student[] = [];
 
-];
-
-export const getStudentName = (id: string) => {
+export const getStudentName = (id: string, dynamicTeam: Student[] = []) => {
   if (id === ADMIN_ID) return "강민제"; 
-  return teamMembers.find(m => m.id === id)?.name || "알 수 없는 사용자";
+  const found = dynamicTeam.find(m => m.id === id);
+  return found?.name || "알 수 없는 사용자";
 };

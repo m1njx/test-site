@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { teamMembers, ADMIN_ID } from './team';
+import type { Student } from './team';
+import { ADMIN_ID } from './team';
 import { LogIn } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (studentId: string) => void;
+  dynamicTeam: Student[];
 }
 
-export default function Login({ onLogin }: LoginProps) {
+export default function Login({ onLogin, dynamicTeam }: LoginProps) {
   const [studentId, setStudentId] = useState('');
   const [error, setError] = useState('');
 
@@ -19,7 +21,7 @@ export default function Login({ onLogin }: LoginProps) {
       return;
     }
 
-    const member = teamMembers.find(m => m.id === studentId);
+    const member = dynamicTeam.find(m => m.id === studentId);
     if (member) {
       onLogin(studentId);
     } else {

@@ -146,3 +146,39 @@ export async function deleteQuiz(quizId: string) {
     throw error;
   }
 }
+
+export async function getStudents(): Promise<any[]> {
+  try {
+    if (isMock) return [];
+    if (!db) return [];
+    const snap = await getDocs(collection(db, 'students'));
+    return snap.docs.map(d => d.data());
+  } catch (error) {
+    console.error("Error getting students:", error);
+    return [];
+  }
+}
+
+export async function saveStudent(student: { id: string, name: string }) {
+  if (isMock) return;
+  if (!db) return;
+  try {
+    const docRef = doc(db, 'students', student.id);
+    await setDoc(docRef, student);
+  } catch (error) {
+    console.error("Error saving student:", error);
+    throw error;
+  }
+}
+
+export async function deleteStudent(id: string) {
+  if (isMock) return;
+  if (!db) return;
+  try {
+    const docRef = doc(db, 'students', id);
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.error("Error deleting student:", error);
+    throw error;
+  }
+}
