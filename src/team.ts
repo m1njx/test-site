@@ -19,6 +19,6 @@ export const teamMembers: Student[] = [
 ];
 
 export const getStudentName = (id: string) => {
-  if (id === ADMIN_ID) return "관리자";
+  if (id === ADMIN_ID) return "강민제"; // 관리자 대신 본인 성함 표기
   return teamMembers.find(m => m.id === id)?.name || "알 수 없는 사용자";
 };
