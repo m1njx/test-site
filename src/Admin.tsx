@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
 import { teamMembers } from './team';
 import { getQuizResults, saveQuiz, deleteQuiz, type Progress } from './api';
-import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, Upload, FileText } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, Upload, FileText, Check } from 'lucide-react';
 
 interface AdminProps {
   onBack: () => void;
@@ -67,6 +67,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps)
       onRefresh();
       if (dynamicQuizzes.length > 1) {
         setSelectedQuizId(dynamicQuizzes[0].id === selectedQuizId ? dynamicQuizzes[1].id : dynamicQuizzes[0].id);
+      } else {
+        setSelectedQuizId('');
       }
     } catch (e) {
       console.error(e);
@@ -110,10 +112,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps)
         setBulkJson('');
         alert(`${parsed.length}개의 문제가 추가되었습니다.`);
       } else {
-        alert("JSON 형식이 올바르지 않습니다. 배열 형태여야 합니다.");
+        alert("JSON 형식이 올바르지 않습니다.");
       }
     } catch (e) {
-      alert("JSON 파싱 오류: 형식을 확인해주세요.");
+      alert("파싱 오류");
     }
   };
 
@@ -218,17 +220,29 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps)
                 <h2 style={{fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8}}>
                   <FileText size={20} color="var(--primary)"/> 퀴즈 설정
                 </h2>
-                <button 
-                  onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer',
-                    background: activeQuiz.isPublished ? 'rgba(39, 174, 96, 0.1)' : 'rgba(139, 149, 161, 0.1)',
-                    color: activeQuiz.isPublished ? '#27AE60' : 'var(--text-secondary)',
-                    fontWeight: 700, fontSize: 14
-                  }}
-                >
-                  {activeQuiz.isPublished ? <><Eye size={18} /> 공개 상태</> : <><EyeOff size={18} /> 비공개 상태</>}
-                </button>
+                <div style={{display: 'flex', gap: 8}}>
+                  <button 
+                    onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer',
+                      background: activeQuiz.isPublished ? 'rgba(39, 174, 96, 0.1)' : 'rgba(139, 149, 161, 0.1)',
+                      color: activeQuiz.isPublished ? '#27AE60' : 'var(--text-secondary)',
+                      fontWeight: 700, fontSize: 14
+                    }}
+                  >
+                    {activeQuiz.isPublished ? <><Eye size={18} /> 공개</> : <><EyeOff size={18} /> 비공개</>}
+                  </button>
+                  <button 
+                    onClick={handleSaveQuiz}
+                    disabled={loading}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', borderRadius: 12, border: 'none', cursor: 'pointer',
+                      background: 'var(--primary)', color: 'white', fontWeight: 700, fontSize: 14, boxShadow: '0 4px 12px rgba(49, 130, 246, 0.3)'
+                    }}
+                  >
+                    {loading ? <RefreshCw className="animate-spin" size={18} /> : <><Check size={18} /> 저장하기</>}
+                  </button>
+                </div>
               </div>
               <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                 <input type="text" value={activeQuiz.title} onChange={(e) => setActiveQuiz({...activeQuiz, title: e.target.value})} placeholder="퀴즈 제목" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
@@ -250,13 +264,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps)
 
             {showBulkImport && (
               <div style={{background: 'var(--bg-color)', padding: 20, borderRadius: 20, marginBottom: 20, border: '1px dashed var(--primary)'}}>
-                <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 10}}>JSON 데이터 붙여넣기 (Question 배열)</label>
-                <textarea 
-                  value={bulkJson}
-                  onChange={(e) => setBulkJson(e.target.value)}
-                  placeholder='[{"type":"multiple","title":"질문",...}]'
-                  style={{width: '100%', minHeight: 150, padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontFamily: 'monospace', fontSize: 12, marginBottom: 12}}
-                />
+                <textarea value={bulkJson} onChange={(e) => setBulkJson(e.target.value)} placeholder='JSON 배열 붙여넣기' style={{width: '100%', minHeight: 150, padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontFamily: 'monospace', fontSize: 12, marginBottom: 12}} />
                 <div style={{display: 'flex', gap: 8}}>
                   <button onClick={handleBulkImport} className="btn btn-primary" style={{padding: '10px 20px', fontSize: 14}}>가져오기</button>
                   <button onClick={() => setShowBulkImport(false)} className="btn btn-secondary" style={{padding: '10px 20px', fontSize: 14}}>취소</button>
@@ -294,11 +302,6 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps)
                   </div>
                 </div>
               ))}
-            </div>
-
-            <div style={{position: 'sticky', bottom: 20, zIndex: 100, display: 'flex', gap: 12}}>
-              <button onClick={() => setActiveTab('results')} className="btn btn-secondary" style={{flex: 1, padding: 18}}>취소</button>
-              <button onClick={handleSaveQuiz} disabled={loading} className="btn btn-primary" style={{flex: 2, padding: 18, boxShadow: '0 8px 32px rgba(49, 130, 246, 0.3)'}}>{loading ? <RefreshCw className="animate-spin" /> : '저장하기'}</button>
             </div>
           </div>
         )}
