@@ -49,7 +49,7 @@ export default function Admin({ onBack }: AdminProps) {
           <select 
             value={selectedQuizId} 
             onChange={(e) => setSelectedQuizId(e.target.value)}
-            style={{width: '100%', padding: '12px 16px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-color)', fontSize: 16}}
+            style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 16, cursor: 'pointer', outline: 'none', appearance: 'none', boxShadow: 'var(--shadow-sm)'}}
           >
             {quizzes.map(q => (
               <option key={q.id} value={q.id}>{q.date} - {q.title}</option>
@@ -80,7 +80,7 @@ export default function Admin({ onBack }: AdminProps) {
             const isCompleted = !!result;
             
             return (
-              <div key={member.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 16, background: 'var(--bg-color)', borderRadius: 12, border: '1px solid var(--border)'}}>
+              <div key={member.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 20, background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)'}}>
                 <div>
                   <div style={{fontWeight: 700, fontSize: 16, marginBottom: 4}}>{member.name}</div>
                   <div style={{fontSize: 13, color: 'var(--text-secondary)'}}>{member.id}</div>
