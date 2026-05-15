@@ -41,7 +41,14 @@ export default function App() {
           merged.push(sq);
         }
       });
-      return merged.sort((a, b) => b.date.localeCompare(a.date));
+      
+      // 정렬 로직: 공개된 퀴즈 우선 -> 최신 날짜 순
+      return merged.sort((a, b) => {
+        const pubA = a.isPublished !== false;
+        const pubB = b.isPublished !== false;
+        if (pubA !== pubB) return pubA ? -1 : 1;
+        return b.date.localeCompare(a.date);
+      });
     });
   };
 
