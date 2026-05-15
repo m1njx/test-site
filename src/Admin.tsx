@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { quizzes } from './data';
 import { teamMembers } from './team';
 import { getQuizResults, type Progress } from './api';
@@ -29,7 +29,7 @@ export default function Admin({ onBack }: AdminProps) {
     fetchResults();
   }, [selectedQuizId]);
 
-  const quiz = quizzes.find(q => q.id === selectedQuizId);
+
 
   return (
     <div className="app-container" style={{background: 'var(--surface)', padding: 0}}>

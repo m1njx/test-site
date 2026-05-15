@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronRight, X, RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
-import { quizzes, type Quiz, type Question } from './data';
+import { Check, ChevronRight, RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
+import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, getStudentName } from './team';
 import { saveScore, getStudentProgress, type Progress } from './api';
 import Login from './Login';
