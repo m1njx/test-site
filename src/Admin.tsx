@@ -29,8 +29,6 @@ export default function Admin({ onBack }: AdminProps) {
     fetchResults();
   }, [selectedQuizId]);
 
-
-
   return (
     <div className="app-container" style={{background: 'var(--surface)', padding: 0}}>
       <header className="app-header" style={{display: 'flex', alignItems: 'center', gap: 16}}>
@@ -80,60 +78,63 @@ export default function Admin({ onBack }: AdminProps) {
             const isCompleted = !!result;
             
             return (
-              <div key={member.id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 20, background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)'}}>
-                <div>
-                  <div style={{fontWeight: 700, fontSize: 16, marginBottom: 4}}>{member.name}</div>
-                  <div style={{fontSize: 13, color: 'var(--text-secondary)'}}>{member.id}</div>
+              <div key={member.id}>
+                <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 20, background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', position: 'relative', zIndex: 2}}>
+                  <div>
+                    <div style={{fontWeight: 700, fontSize: 16, marginBottom: 4}}>{member.name}</div>
+                    <div style={{fontSize: 13, color: 'var(--text-secondary)'}}>{member.id}</div>
+                  </div>
+                  
+                  <div style={{textAlign: 'right'}}>
+                    {isCompleted ? (
+                      <>
+                        <div style={{display: 'flex', alignItems: 'center', gap: 6, color: '#27AE60', fontWeight: 700, marginBottom: 4, justifyContent: 'flex-end'}}>
+                          <CheckCircle2 size={16} /> 완료
+                        </div>
+                        <div style={{fontSize: 14, fontWeight: 600}}>
+                          {result.score} / {result.total}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600, justifyContent: 'flex-end'}}>
+                          <XCircle size={16} /> 미완료
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
                 
-                <div style={{textAlign: 'right'}}>
-                  {isCompleted ? (
-                    <>
-                      <div style={{display: 'flex', alignItems: 'center', gap: 6, color: '#27AE60', fontWeight: 700, marginBottom: 4, justifyContent: 'flex-end'}}>
-                        <CheckCircle2 size={16} /> 완료
+                {isCompleted && result.detailedResults && (
+                  <div style={{padding: '32px 20px 20px', marginTop: -20, background: 'var(--surface)', borderRadius: '0 0 16px 16px', border: '1px solid var(--border)', borderTop: 'none', display: 'flex', gap: 6, flexWrap: 'wrap', position: 'relative', zIndex: 1}}>
+                    {Object.values(result.detailedResults).map((correct, idx) => (
+                      <div 
+                        key={idx} 
+                        style={{
+                          width: 28, 
+                          height: 28, 
+                          borderRadius: 6, 
+                          background: correct ? 'rgba(39, 174, 96, 0.1)' : 'rgba(231, 76, 60, 0.1)', 
+                          color: correct ? '#27AE60' : '#E74C3C',
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          fontSize: 12, 
+                          fontWeight: 800,
+                          border: `1px solid ${correct ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`
+                        }}
+                        title={`문제 ${idx + 1}: ${correct ? '정답' : '오답'}`}
+                      >
+                        {idx + 1}
                       </div>
-                      <div style={{fontSize: 14, fontWeight: 600}}>
-                        {result.score} / {result.total}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div style={{display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontWeight: 600, justifyContent: 'flex-end'}}>
-                        <XCircle size={16} /> 미완료
-                      </div>
-                    </>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              
-              {isCompleted && result.detailedResults && (
-                <div style={{padding: '0 20px 20px', marginTop: -12, background: 'var(--surface)', borderRadius: '0 0 16px 16px', border: '1px solid var(--border)', borderTop: 'none', display: 'flex', gap: 6, flexWrap: 'wrap'}}>
-                  {Object.values(result.detailedResults).map((correct, idx) => (
-                    <div 
-                      key={idx} 
-                      style={{
-                        width: 28, 
-                        height: 28, 
-                        borderRadius: 6, 
-                        background: correct ? 'rgba(39, 174, 96, 0.1)' : 'rgba(231, 76, 60, 0.1)', 
-                        color: correct ? '#27AE60' : '#E74C3C',
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        fontSize: 12, 
-                        fontWeight: 800,
-                        border: `1px solid ${correct ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`
-                      }}
-                      title={`문제 ${idx + 1}: ${correct ? '정답' : '오답'}`}
-                    >
-                      {idx + 1}
-                    </div>
-                  ))}
-                </div>
-              )}
             );
           })}
         </div>
+      </div>
     </div>
   );
 }
