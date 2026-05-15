@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { quizzes as staticQuizzes, type Quiz, type Question, type QuestionType } from './data';
+import { type Quiz, type Question, type QuestionType } from './data';
 import { teamMembers } from './team';
 import { getQuizResults, saveQuiz, type Progress } from './api';
 import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Plus, Trash2, Save, ListChecks, FileText, Edit3 } from 'lucide-react';
