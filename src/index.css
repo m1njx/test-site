@@ -456,6 +456,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
   font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .quiz-action {
