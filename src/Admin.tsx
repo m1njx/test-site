@@ -105,10 +105,35 @@ export default function Admin({ onBack }: AdminProps) {
                   )}
                 </div>
               </div>
+              
+              {isCompleted && result.detailedResults && (
+                <div style={{padding: '0 20px 20px', marginTop: -12, background: 'var(--surface)', borderRadius: '0 0 16px 16px', border: '1px solid var(--border)', borderTop: 'none', display: 'flex', gap: 6, flexWrap: 'wrap'}}>
+                  {Object.values(result.detailedResults).map((correct, idx) => (
+                    <div 
+                      key={idx} 
+                      style={{
+                        width: 28, 
+                        height: 28, 
+                        borderRadius: 6, 
+                        background: correct ? 'rgba(39, 174, 96, 0.1)' : 'rgba(231, 76, 60, 0.1)', 
+                        color: correct ? '#27AE60' : '#E74C3C',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        fontSize: 12, 
+                        fontWeight: 800,
+                        border: `1px solid ${correct ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`
+                      }}
+                      title={`문제 ${idx + 1}: ${correct ? '정답' : '오답'}`}
+                    >
+                      {idx + 1}
+                    </div>
+                  ))}
+                </div>
+              )}
             );
           })}
         </div>
-      </div>
     </div>
   );
 }

@@ -12,6 +12,7 @@ export interface Progress {
   score: number;
   total: number;
   timestamp: number;
+  detailedResults?: Record<string, boolean>;
 }
 
 // Cache for Firebase results to improve performance
@@ -25,11 +26,11 @@ const FIREBASE_CACHE: {
 
 const CACHE_TTL = 1000 * 30; // 30 seconds cache
 
-export async function saveScore(studentId: string, quizId: string, score: number, total: number) {
+export async function saveScore(studentId: string, quizId: string, score: number, total: number, detailedResults?: Record<string, boolean>) {
   if (!studentId || !quizId) return;
   if (studentId === 'admin') return;
   
-  const data: Progress = { studentId, quizId, score, total, timestamp: Date.now() };
+  const data: Progress = { studentId, quizId, score, total, timestamp: Date.now(), detailedResults };
   
   try {
     if (isMock) {

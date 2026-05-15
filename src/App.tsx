@@ -257,16 +257,17 @@ export default function App() {
     
     // Save score to DB
     try {
-      await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, totalQuestions);
+      await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, totalQuestions, gradingResults);
       // Defensive: Update local state immediately so home screen is updated
       setStudentProgress(prev => {
         const existingIdx = prev.findIndex(p => p.quizId === selectedQuiz!.id);
-        const newData = { 
+        const newData: Progress = { 
           studentId: loggedInUser!, 
           quizId: selectedQuiz!.id, 
           score: correctCount, 
           total: totalQuestions, 
-          timestamp: Date.now() 
+          timestamp: Date.now(),
+          detailedResults: gradingResults
         };
         if (existingIdx >= 0) {
           const next = [...prev];
