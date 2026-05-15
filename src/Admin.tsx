@@ -292,14 +292,14 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
           <div style={{maxWidth: 600, margin: '0 auto'}}>
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
               <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}><UserPlus size={20} color="var(--primary)"/> 팀원 추가</h2>
-              <div style={{display: 'flex', gap: 12}}>
-                <input type="text" placeholder="학번 (ID)" value={newStudent.id} onChange={(e) => setNewStudent({...newStudent, id: e.target.value})} style={{flex: 1.5, padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
-                <input type="text" placeholder="이름" value={newStudent.name} onChange={(e) => setNewStudent({...newStudent, name: e.target.value})} style={{flex: 1, padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
+              <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
+                <input type="text" placeholder="학번 (ID)" value={newStudent.id} onChange={(e) => setNewStudent({...newStudent, id: e.target.value})} style={{flex: '1 1 200px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
+                <input type="text" placeholder="이름" value={newStudent.name} onChange={(e) => setNewStudent({...newStudent, name: e.target.value})} style={{flex: '1 1 150px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
                 <button 
                   onClick={handleAddStudent} 
                   disabled={loading} 
                   className="btn btn-primary" 
-                  style={{padding: '0 28px', borderRadius: 12, fontWeight: 700, fontSize: 15, height: 'auto', boxShadow: '0 4px 12px rgba(49, 130, 246, 0.2)'}}
+                  style={{flex: '0 0 auto', minWidth: 120, padding: '0 28px', borderRadius: 12, fontWeight: 700, fontSize: 15, height: 48, boxShadow: '0 4px 12px rgba(49, 130, 246, 0.2)'}}
                 >
                   {loading ? <RefreshCw className="animate-spin" size={18} /> : '팀원 등록'}
                 </button>

@@ -63,12 +63,22 @@ export default function App() {
     loadTeam();
   }, []);
 
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+
   const enterAdmin = () => {
-    const password = window.prompt("관리자 비밀번호를 입력해주세요.");
-    if (password === "030918") {
+    setShowPasswordModal(true);
+    setAdminPassword('');
+  };
+
+  const handlePasswordSubmit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (adminPassword === "030918") {
+      setShowPasswordModal(false);
       setCurrentView('admin');
     } else {
       alert("비밀번호가 틀렸습니다.");
+      setAdminPassword('');
     }
   };
 
@@ -553,6 +563,49 @@ export default function App() {
           )}
         </button>
       </footer>
+      {/* 관리자 비밀번호 모달 */}
+      <AnimatePresence>
+        {showPasswordModal && (
+          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)'}}>
+            <motion.div 
+              initial={{scale: 0.9, opacity: 0}}
+              animate={{scale: 1, opacity: 1}}
+              exit={{scale: 0.9, opacity: 0}}
+              style={{background: 'var(--surface)', padding: 32, borderRadius: 24, width: '100%', maxWidth: 360, textAlign: 'center', boxShadow: 'var(--shadow-lg)'}}
+            >
+              <h2 style={{fontSize: 20, fontWeight: 800, marginBottom: 8}}>관리자 인증</h2>
+              <p style={{fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24}}>비밀번호를 입력해주세요.</p>
+              
+              <form onSubmit={handlePasswordSubmit}>
+                <div style={{position: 'relative', marginBottom: 24}}>
+                  <input 
+                    type="password" 
+                    autoFocus
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    style={{
+                      width: '100%', padding: '16px', borderRadius: 16, border: '1px solid var(--border)', 
+                      fontSize: 16, textAlign: 'center', background: 'var(--bg-color)', color: 'transparent', caretColor: 'var(--primary)'
+                    }}
+                  />
+                  <div style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none',
+                    fontSize: 20, letterSpacing: 4
+                  }}>
+                    {adminPassword.split('').map(() => '🐹')}
+                  </div>
+                </div>
+                
+                <div style={{display: 'flex', gap: 12}}>
+                  <button type="button" onClick={() => setShowPasswordModal(false)} className="btn btn-secondary" style={{flex: 1}}>취소</button>
+                  <button type="submit" className="btn btn-primary" style={{flex: 1}}>확인</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
