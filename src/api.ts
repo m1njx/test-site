@@ -1,5 +1,5 @@
 import { db, isMock } from './firebase';
-import { collection, setDoc, getDocs, doc, query, where } from 'firebase/firestore';
+import { collection, setDoc, getDocs, doc, query, where, deleteDoc } from 'firebase/firestore';
 import type { Quiz } from './data';
 
 // In-memory DB for when Firebase is not configured yet
@@ -130,6 +130,19 @@ export async function saveQuiz(quiz: Quiz) {
     await setDoc(docRef, quiz);
   } catch (error) {
     console.error("Error saving quiz:", error);
+    throw error;
+  }
+}
+
+export async function deleteQuiz(quizId: string) {
+  if (isMock) return;
+  if (!db) return;
+  
+  try {
+    const docRef = doc(db, 'quizzes', quizId);
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.error("Error deleting quiz:", error);
     throw error;
   }
 }

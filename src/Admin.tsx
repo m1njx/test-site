@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
 import { teamMembers } from './team';
-import { getQuizResults, saveQuiz, type Progress } from './api';
-import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Plus, Trash2, Save, ListChecks, FileText, Edit3 } from 'lucide-react';
+import { getQuizResults, saveQuiz, deleteQuiz, type Progress } from './api';
+import { ArrowLeft, RefreshCw, CheckCircle2, XCircle, Plus, Trash2, Save, ListChecks, FileText, Edit3, Trash } from 'lucide-react';
 
 interface AdminProps {
   onBack: () => void;
   dynamicQuizzes: Quiz[];
+  onRefresh: () => void;
 }
 
-export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
+export default function Admin({ onBack, dynamicQuizzes, onRefresh }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'results' | 'create'>('results');
   const [selectedQuizId, setSelectedQuizId] = useState(dynamicQuizzes[0]?.id || '');
   const [results, setResults] = useState<Progress[]>([]);
@@ -48,6 +49,26 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
       setActiveQuiz(JSON.parse(JSON.stringify(quizToEdit))); // Deep copy
       setActiveTab('create');
     }
+  };
+
+  const handleDeleteQuiz = async () => {
+    if (!selectedQuizId) return;
+    if (!window.confirm("정말로 이 퀴즈를 삭제하시겠습니까? 학생들의 점수 데이터는 유지되지만 퀴즈 목록에서는 사라집니다.")) return;
+    
+    setLoading(true);
+    try {
+      await deleteQuiz(selectedQuizId);
+      alert("퀴즈가 성공적으로 삭제되었습니다.");
+      onRefresh();
+      // Reset selection
+      if (dynamicQuizzes.length > 1) {
+        setSelectedQuizId(dynamicQuizzes[0].id === selectedQuizId ? dynamicQuizzes[1].id : dynamicQuizzes[0].id);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("삭제 중 오류가 발생했습니다.");
+    }
+    setLoading(false);
   };
 
   const resetEditor = () => {
@@ -93,15 +114,15 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
     }
     setLoading(true);
     try {
-      // Remove any undefined/null fields that Firestore might reject
       const cleanedQuiz = JSON.parse(JSON.stringify(activeQuiz));
       await saveQuiz(cleanedQuiz);
       alert("퀴즈가 성공적으로 저장되었습니다!");
+      onRefresh();
       setActiveTab('results');
       setSelectedQuizId(activeQuiz.id);
     } catch (e: any) {
       console.error("Save error:", e);
-      alert(`저장 실패: ${e.message || '알 수 없는 오류'}\n\nFirebase Console에서 Firestore 보안 규칙(Rules)이 'allow read, write: if true;'로 설정되어 있는지 확인해주세요.`);
+      alert(`저장 실패: ${e.message || '알 수 없는 오류'}\n\nFirebase Console에서 Firestore 보안 규칙을 확인해주세요.`);
     }
     setLoading(false);
   };
@@ -147,23 +168,28 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
         {activeTab === 'results' ? (
           <>
             <div style={{marginBottom: 24}}>
-              <label style={{display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)'}}>퀴즈 선택</label>
-              <div style={{display: 'flex', gap: 12}}>
+              <label style={{display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)'}}>퀴즈 선택 및 관리</label>
+              <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
                 <select 
                   value={selectedQuizId} 
                   onChange={(e) => setSelectedQuizId(e.target.value)}
-                  style={{flex: 1, padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 16, cursor: 'pointer', outline: 'none', appearance: 'none', boxShadow: 'var(--shadow-sm)'}}
+                  style={{flex: 1, minWidth: 200, padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 16, cursor: 'pointer', outline: 'none', appearance: 'none', boxShadow: 'var(--shadow-sm)'}}
                 >
                   {dynamicQuizzes.map(q => (
                     <option key={q.id} value={q.id}>{q.date} - {q.title}</option>
                   ))}
                 </select>
-                <button onClick={loadQuizForEdit} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}>
-                  <Edit3 size={18} /> 수정
-                </button>
-                <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}>
-                  <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-                </button>
+                <div style={{display: 'flex', gap: 8}}>
+                  <button onClick={loadQuizForEdit} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600}}>
+                    <Edit3 size={18} /> 수정
+                  </button>
+                  <button onClick={handleDeleteQuiz} style={{background: 'rgba(231, 76, 60, 0.05)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: '#E74C3C', display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600}}>
+                    <Trash size={18} /> 삭제
+                  </button>
+                  <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}>
+                    <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -264,7 +290,7 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
                     />
                   </div>
                   <div style={{flex: 1}}>
-                    <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>고유 ID (날짜 변경 시 자동 갱신)</label>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>고유 ID (변경 불가)</label>
                     <input 
                       type="text" 
                       value={activeQuiz.id}
@@ -297,64 +323,74 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
               </div>
             </div>
 
-            <div style={{display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 40}}>
+            <div style={{display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 100}}>
               {activeQuiz.questions.map((q, idx) => (
                 <div key={q.id} style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', position: 'relative'}}>
-                  <button 
-                    onClick={() => removeQuestion(q.id)}
-                    style={{position: 'absolute', top: 20, right: 20, background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer'}}
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                  <div style={{position: 'absolute', top: 20, right: 20, display: 'flex', gap: 8}}>
+                    <button 
+                      onClick={() => removeQuestion(q.id)}
+                      style={{background: 'rgba(231, 76, 60, 0.1)', border: 'none', borderRadius: 8, width: 32, height: 32, color: '#E74C3C', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'}}
+                      title="문제 삭제"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                   
-                  <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16}}>
-                    <span style={{background: 'var(--primary)', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20}}>
+                    <span style={{background: 'var(--primary)', color: 'white', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800}}>
                       {idx + 1}
                     </span>
-                    <span style={{fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase'}}>
+                    <span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>
                       {q.type === 'short' ? '주관식(코딩)' : '객관식'}
                     </span>
                   </div>
 
                   <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
-                    <input 
-                      type="text" 
-                      placeholder="질문 제목을 입력하세요."
-                      value={q.title}
-                      onChange={(e) => updateQuestion(q.id, {title: e.target.value})}
-                      style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}
-                    />
+                    <div>
+                      <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>문제 제목</label>
+                      <input 
+                        type="text" 
+                        placeholder="질문을 입력하세요."
+                        value={q.title}
+                        onChange={(e) => updateQuestion(q.id, {title: e.target.value})}
+                        style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}
+                      />
+                    </div>
                     
                     {q.type === 'multiple' && q.options && (
-                      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10}}>
-                        {q.options.map((opt, optIdx) => (
-                          <div key={optIdx} style={{display: 'flex', alignItems: 'center', gap: 8}}>
-                            <input 
-                              type="radio" 
-                              name={`correct-${q.id}`}
-                              checked={q.correctAnswers[0] === optIdx.toString()}
-                              onChange={() => updateQuestion(q.id, {correctAnswers: [optIdx.toString()]})}
-                            />
-                            <input 
-                              type="text" 
-                              placeholder={`보기 ${optIdx + 1}`}
-                              value={opt}
-                              onChange={(e) => {
-                                const newOpts = [...q.options!];
-                                newOpts[optIdx] = e.target.value;
-                                updateQuestion(q.id, {options: newOpts});
-                              }}
-                              style={{flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14}}
-                            />
-                          </div>
-                        ))}
+                      <div>
+                        <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)'}}>보기 설정 (정답을 선택해주세요)</label>
+                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                          {q.options.map((opt, optIdx) => (
+                            <div key={optIdx} style={{display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-color)', padding: '8px 12px', borderRadius: 12, border: q.correctAnswers[0] === optIdx.toString() ? '1px solid var(--primary)' : '1px solid transparent'}}>
+                              <input 
+                                type="radio" 
+                                name={`correct-${q.id}`}
+                                checked={q.correctAnswers[0] === optIdx.toString()}
+                                onChange={() => updateQuestion(q.id, {correctAnswers: [optIdx.toString()]})}
+                                style={{cursor: 'pointer'}}
+                              />
+                              <input 
+                                type="text" 
+                                placeholder={`보기 ${optIdx + 1}`}
+                                value={opt}
+                                onChange={(e) => {
+                                  const newOpts = [...q.options!];
+                                  newOpts[optIdx] = e.target.value;
+                                  updateQuestion(q.id, {options: newOpts});
+                                }}
+                                style={{flex: 1, background: 'transparent', border: 'none', fontSize: 14, outline: 'none'}}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 
                     {q.type === 'short' && (
-                      <>
+                      <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
                         <div>
-                          <label style={{display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)'}}>초기 코드 (Setup Code)</label>
+                          <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>초기 코드 (Setup Code)</label>
                           <textarea 
                             value={q.setupCode}
                             onChange={(e) => updateQuestion(q.id, {setupCode: e.target.value})}
@@ -363,7 +399,7 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
                           />
                         </div>
                         <div>
-                          <label style={{display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)'}}>검증 코드 (Validation Code)</label>
+                          <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>검증 코드 (Validation Code)</label>
                           <textarea 
                             value={q.validationCode}
                             onChange={(e) => updateQuestion(q.id, {validationCode: e.target.value})}
@@ -371,14 +407,15 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
                             style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, fontFamily: 'monospace', minHeight: 60}}
                           />
                         </div>
-                      </>
+                      </div>
                     )}
 
                     <div>
-                      <label style={{display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: 'var(--text-secondary)'}}>해설</label>
+                      <label style={{display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)'}}>해설</label>
                       <textarea 
                         value={q.explanation}
                         onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})}
+                        placeholder="정답에 대한 설명을 입력하세요."
                         style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, minHeight: 60}}
                       />
                     </div>
@@ -387,14 +424,23 @@ export default function Admin({ onBack, dynamicQuizzes }: AdminProps) {
               ))}
             </div>
 
-            <button 
-              onClick={handleSaveQuiz}
-              disabled={loading}
-              className="btn btn-primary" 
-              style={{width: '100%', padding: 20, position: 'sticky', bottom: 20, boxShadow: '0 8px 32px rgba(49, 130, 246, 0.3)', zIndex: 100}}
-            >
-              {loading ? <RefreshCw className="animate-spin" /> : <><Save size={20} /> 퀴즈 저장하기</>}
-            </button>
+            <div style={{position: 'sticky', bottom: 20, zIndex: 100, display: 'flex', gap: 12}}>
+              <button 
+                onClick={() => setActiveTab('results')}
+                className="btn btn-secondary" 
+                style={{flex: 1, padding: 18}}
+              >
+                취소
+              </button>
+              <button 
+                onClick={handleSaveQuiz}
+                disabled={loading}
+                className="btn btn-primary" 
+                style={{flex: 2, padding: 18, boxShadow: '0 8px 32px rgba(49, 130, 246, 0.3)'}}
+              >
+                {loading ? <RefreshCw className="animate-spin" /> : <><Save size={20} /> 변경사항 저장하기</>}
+              </button>
+            </div>
           </div>
         )}
       </div>

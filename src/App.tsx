@@ -21,20 +21,21 @@ export default function App() {
   const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
 
-  useEffect(() => {
-    const loadQuizzes = async () => {
-      const qs = await getQuizzes();
-      // 기존 정적 퀴즈와 Firestore의 동적 퀴즈를 합칩니다 (ID 중복 방지)
-      setDynamicQuizzes(prev => {
-        const merged = [...qs];
-        quizzes.forEach(sq => {
-          if (!merged.find(mq => mq.id === sq.id)) {
-            merged.push(sq);
-          }
-        });
-        return merged.sort((a, b) => b.date.localeCompare(a.date));
+  const loadQuizzes = async () => {
+    const qs = await getQuizzes();
+    // 기존 정적 퀴즈와 Firestore의 동적 퀴즈를 합칩니다 (ID 중복 방지)
+    setDynamicQuizzes(() => {
+      const merged = [...qs];
+      quizzes.forEach(sq => {
+        if (!merged.find(mq => mq.id === sq.id)) {
+          merged.push(sq);
+        }
       });
-    };
+      return merged.sort((a, b) => b.date.localeCompare(a.date));
+    });
+  };
+
+  useEffect(() => {
     loadQuizzes();
   }, []);
 
@@ -92,7 +93,7 @@ export default function App() {
   }
 
   if (currentView === 'admin') {
-    return <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} />;
+    return <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} onRefresh={loadQuizzes} />;
   }
 
   const startQuiz = (quiz: Quiz) => {
