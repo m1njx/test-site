@@ -165,10 +165,18 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     setLoading(false);
   };
 
+  const handleHeaderBack = () => {
+    if (activeTab !== 'results') {
+      setActiveTab('results');
+    } else {
+      onBack();
+    }
+  };
+
   return (
     <div className="app-container" style={{background: 'var(--surface)', padding: 0, maxWidth: 1000}}>
       <header className="app-header" style={{display: 'flex', alignItems: 'center', gap: 16, borderBottom: '1px solid var(--border)'}}>
-        <button onClick={onBack} style={{background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)'}}>
+        <button onClick={handleHeaderBack} style={{background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)'}}>
           <ArrowLeft size={24} />
         </button>
         <h1 style={{fontSize: 20, fontWeight: 700, margin: 0}}>관리자 센터</h1>
