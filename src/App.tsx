@@ -173,8 +173,15 @@ export default function App() {
       if (gradingResults[q.id]) correctCount++;
     }
     setResults(gradingResults);
+    const fullResults: Record<string, any> = { ...gradingResults };
+    questions.forEach(q => {
+      if (q.type === 'short') {
+        fullResults[`ans_${q.id}`] = answers[q.id];
+      }
+    });
+
     try {
-      await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, gradingResults);
+      await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
       await fetchProgress();
     } catch (e) { alert("결과 저장 실패"); }
     setIsGrading(false);
