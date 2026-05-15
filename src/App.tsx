@@ -258,6 +258,23 @@ export default function App() {
     // Save score to DB
     try {
       await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, totalQuestions);
+      // Defensive: Update local state immediately so home screen is updated
+      setStudentProgress(prev => {
+        const existingIdx = prev.findIndex(p => p.quizId === selectedQuiz!.id);
+        const newData = { 
+          studentId: loggedInUser!, 
+          quizId: selectedQuiz!.id, 
+          score: correctCount, 
+          total: totalQuestions, 
+          timestamp: Date.now() 
+        };
+        if (existingIdx >= 0) {
+          const next = [...prev];
+          next[existingIdx] = newData;
+          return next;
+        }
+        return [...prev, newData];
+      });
     } catch (dbError) {
       console.error("Failed to save score to Firebase:", dbError);
       alert("결과를 데이터베이스에 저장하는데 실패했습니다. (파이어베이스 권한 설정이나 네트워크를 확인해주세요)");
