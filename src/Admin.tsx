@@ -78,6 +78,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
   const [loading, setLoading] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [aiPreviews, setAiPreviews] = useState<Record<string, { correctAnswer: string; explanation: string; loading?: boolean; error?: string }>>({});
+  const [showQuizAiPreview, setShowQuizAiPreview] = useState(false);
 
   // Team Editor State
   const [newStudent, setNewStudent] = useState({ id: '', name: '' });
@@ -105,6 +106,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
   useEffect(() => {
     if (activeTab === 'results') {
       fetchResults();
+      setShowQuizAiPreview(false);
     }
   }, [selectedQuizId, activeTab]);
 
@@ -292,6 +294,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     );
   };
 
+  const selectedQuiz = dynamicQuizzes.find(q => q.id === selectedQuizId);
+
   return (
     <div className="app-container" style={{background: 'var(--surface)', padding: 0, maxWidth: 1000}}>
       <header className="app-header" style={{display: 'flex', alignItems: 'center', gap: 16, borderBottom: '1px solid var(--border)'}}>
@@ -312,7 +316,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
           <>
             <div style={{marginBottom: 24}}>
               <label style={{display: 'block', fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)'}}>퀴즈 관리</label>
-              <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
+              <div style={{display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12}}>
                 <select value={selectedQuizId} onChange={(e) => setSelectedQuizId(e.target.value)} style={{flex: 1, minWidth: 200, padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 16}}>
                   {dynamicQuizzes.map(q => (
                     <option key={q.id} value={q.id}>{q.date} - {q.title} {q.isPublished === false ? '(비공개)' : ''}</option>
@@ -324,7 +328,136 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}><RefreshCw size={20} className={loading ? 'animate-spin' : ''} /></button>
                 </div>
               </div>
+              
+              {selectedQuizId && (
+                <button
+                  onClick={() => setShowQuizAiPreview(!showQuizAiPreview)}
+                  style={{
+                    width: '100%',
+                    background: showQuizAiPreview ? 'rgba(49, 130, 246, 0.1)' : 'var(--bg-color)',
+                    color: 'var(--primary)',
+                    border: '1px solid rgba(49, 130, 246, 0.2)',
+                    padding: '12px 20px',
+                    borderRadius: 12,
+                    fontWeight: 700,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    outline: 'none',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  🤖 이 퀴즈의 전체 AI 모범 답안 및 정답 확인
+                </button>
+              )}
             </div>
+
+            {showQuizAiPreview && selectedQuiz && (
+              <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+                  <h3 style={{fontSize: 16, fontWeight: 800, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 6, margin: 0}}>
+                    🤖 이 퀴즈의 전체 AI 모범 답안 및 정답
+                  </h3>
+                  <button onClick={() => setShowQuizAiPreview(false)} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 700}}>닫기</button>
+                </div>
+                
+                <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
+                  {selectedQuiz.questions.map((q, idx) => {
+                    return (
+                      <div key={q.id} style={{padding: 16, background: 'var(--bg-color)', borderRadius: 16, border: '1px solid var(--border)'}}>
+                        <div style={{fontWeight: 700, fontSize: 14, marginBottom: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center'}}>
+                          <span style={{color: 'var(--primary)'}}>Q{idx + 1}.</span>
+                          <span style={{flex: 1}}>{q.title}</span>
+                          <span style={{fontSize: 11, background: 'rgba(49, 130, 246, 0.1)', color: 'var(--primary)', padding: '2px 6px', borderRadius: 6}}>{q.type === 'short' ? '주관식' : '객관식'}</span>
+                        </div>
+                        
+                        {q.type === 'short' ? (
+                          <div style={{marginTop: 10}}>
+                            <button
+                              onClick={async () => {
+                                setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: true } }));
+                                try {
+                                  const res = await fetchAiPreview(q.title, q.description || '');
+                                  setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { ...res, loading: false } }));
+                                } catch (err) {
+                                  setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 로딩 실패' } }));
+                                }
+                              }}
+                              disabled={aiPreviews[`quiz_${q.id}`]?.loading}
+                              style={{
+                                background: 'var(--surface)',
+                                border: '1px solid var(--border)',
+                                color: 'var(--primary)',
+                                padding: '8px 12px',
+                                borderRadius: 8,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                outline: 'none'
+                              }}
+                            >
+                              {aiPreviews[`quiz_${q.id}`]?.loading ? (
+                                <RefreshCw className="animate-spin" size={12} />
+                              ) : '✨ AI 모범 답안 생성/조회'}
+                            </button>
+                            
+                            {aiPreviews[`quiz_${q.id}`] && !aiPreviews[`quiz_${q.id}`].loading && (
+                              <div style={{marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8}}>
+                                {aiPreviews[`quiz_${q.id}`].error ? (
+                                  <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
+                                ) : (
+                                  <>
+                                    <div>
+                                      <div style={{fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 2}}>모범 답안:</div>
+                                      <pre style={{margin: 0, padding: 8, background: 'var(--surface)', borderRadius: 8, fontSize: 11, fontFamily: 'monospace', overflowX: 'auto', border: '1px solid var(--border)'}}>
+                                        {aiPreviews[`quiz_${q.id}`].correctAnswer}
+                                      </pre>
+                                    </div>
+                                    <div>
+                                      <div style={{fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 2}}>상세 해설:</div>
+                                      <div style={{fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4}}>{aiPreviews[`quiz_${q.id}`].explanation}</div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{marginTop: 10}}>
+                            <div style={{fontSize: 12, color: 'var(--text-secondary)'}}>
+                              <strong>선택지 정답 확인:</strong>
+                              <div style={{display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4}}>
+                                {q.options?.map((opt, oIdx) => {
+                                  const isCorrect = q.correctAnswers?.includes(oIdx.toString());
+                                  return (
+                                    <div key={oIdx} style={{padding: '6px 10px', background: isCorrect ? 'rgba(39, 174, 96, 0.05)' : 'var(--surface)', borderRadius: 8, border: isCorrect ? '1px solid rgba(39, 174, 96, 0.3)' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6}}>
+                                      {isCorrect ? <CheckCircle2 size={14} color="#27AE60" /> : <div style={{width: 14}} />}
+                                      <span style={{color: isCorrect ? '#27AE60' : 'var(--text-secondary)', fontWeight: isCorrect ? 700 : 500}}>{opt}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                            {q.explanation && (
+                              <div style={{marginTop: 8, fontSize: 12, color: 'var(--text-secondary)', borderTop: '1px dashed var(--border)', paddingTop: 8}}>
+                                <strong>해설:</strong> {q.explanation}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {renderResults()}
           </>
         )}
