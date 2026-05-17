@@ -68,7 +68,18 @@ ${userAns}
     throw new Error('Empty response from Gemini');
   }
 
-  const result = JSON.parse(text.trim());
+  let cleanText = text.trim();
+  if (cleanText.includes('```')) {
+    // Extract JSON between ```json and ```
+    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match) {
+      cleanText = match[1].trim();
+    } else {
+      cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+    }
+  }
+
+  const result = JSON.parse(cleanText);
   return {
     isCorrect: !!result.isCorrect,
     reason: result.reason || ''
