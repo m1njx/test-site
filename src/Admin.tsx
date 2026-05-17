@@ -563,7 +563,70 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                   <input type="text" placeholder="질문" value={q.title} onChange={(e) => updateQuestion(q.id, {title: e.target.value})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}/>
                   {q.type !== 'short' && (
-                    <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14}}/>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+                      <div style={{fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)'}}>객관식 보기 설정 (체크박스를 선택하면 정답으로 지정됩니다)</div>
+                      {q.options?.map((opt, oIdx) => {
+                        const isCorrect = q.correctAnswers?.includes(oIdx.toString());
+                        return (
+                          <div key={oIdx} style={{display: 'flex', alignItems: 'center', gap: 10}}>
+                            <input
+                              type="checkbox"
+                              checked={isCorrect}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                let updatedCorrects = [...(q.correctAnswers || [])];
+                                if (checked) {
+                                  if (!updatedCorrects.includes(oIdx.toString())) {
+                                    updatedCorrects.push(oIdx.toString());
+                                  }
+                                } else {
+                                  updatedCorrects = updatedCorrects.filter(c => c !== oIdx.toString());
+                                }
+                                updateQuestion(q.id, { correctAnswers: updatedCorrects });
+                              }}
+                              style={{width: 20, height: 20, cursor: 'pointer'}}
+                            />
+                            <input
+                              type="text"
+                              placeholder={`보기 ${oIdx + 1}`}
+                              value={opt}
+                              onChange={(e) => {
+                                const newOpts = [...(q.options || [])];
+                                newOpts[oIdx] = e.target.value;
+                                updateQuestion(q.id, { options: newOpts });
+                              }}
+                              style={{flex: 1, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 14}}
+                            />
+                            {(q.options && q.options.length > 2) && (
+                              <button
+                                onClick={() => {
+                                  const newOpts = q.options!.filter((_, oi) => oi !== oIdx);
+                                  // Adjust correctAnswers indices after deletion
+                                  let newCorrects = (q.correctAnswers || [])
+                                    .map(c => parseInt(c))
+                                    .filter(c => c !== oIdx)
+                                    .map(c => c > oIdx ? (c - 1).toString() : c.toString());
+                                  updateQuestion(q.id, { options: newOpts, correctAnswers: newCorrects });
+                                }}
+                                style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer', fontSize: 13, fontWeight: 600}}
+                              >
+                                삭제
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <button
+                        onClick={() => {
+                          const newOpts = [...(q.options || []), ''];
+                          updateQuestion(q.id, { options: newOpts });
+                        }}
+                        style={{alignSelf: 'flex-start', background: 'var(--bg-color)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 16px', fontSize: 13, fontWeight: 700, cursor: 'pointer'}}
+                      >
+                        + 보기 추가
+                      </button>
+                      <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="정답 상세 해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, marginTop: 8}}/>
+                    </div>
                   )}
                   {q.type === 'short' && (
                     <div style={{display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8}}>
