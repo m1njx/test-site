@@ -20,6 +20,7 @@ export interface Quiz {
   description: string;
   questions: Question[];
   isPublished?: boolean;
+  visibleTo?: string[];
 }
 
 export const quizzes: Quiz[] = [];

@@ -245,11 +245,22 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 
         {activeTab === 'create' && (
           <div style={{maxWidth: 720, margin: '0 auto'}}>
-            {/* Create Quiz UI (Same as before) */}
+            {/* Create Quiz UI */}
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
                 <h2 style={{fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8}}><FileText size={20} color="var(--primary)"/> 퀴즈 설정</h2>
                 <div style={{display: 'flex', gap: 8}}>
+                  <button onClick={() => setActiveQuiz({
+                    id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`,
+                    date: new Date().toISOString().split('T')[0],
+                    title: '',
+                    description: '',
+                    questions: [],
+                    isPublished: true,
+                    visibleTo: undefined
+                  })} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 12, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14}}>
+                    새 퀴즈
+                  </button>
                   <button onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', background: activeQuiz.isPublished ? 'rgba(39, 174, 96, 0.1)' : 'rgba(139, 149, 161, 0.1)', color: activeQuiz.isPublished ? '#27AE60' : 'var(--text-secondary)', fontWeight: 700, fontSize: 14}}>
                     {activeQuiz.isPublished ? <><Eye size={18} /> 공개</> : <><EyeOff size={18} /> 비공개</>}
                   </button>
@@ -260,6 +271,67 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <input type="text" value={activeQuiz.title} onChange={(e) => setActiveQuiz({...activeQuiz, title: e.target.value})} placeholder="퀴즈 제목" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
                 <input type="date" value={activeQuiz.date} onChange={(e) => setActiveQuiz({...activeQuiz, date: e.target.value, id: `q-${e.target.value}`})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
                 <textarea value={activeQuiz.description} onChange={(e) => setActiveQuiz({...activeQuiz, description: e.target.value})} placeholder="상세 설명" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, minHeight: 80}}/>
+                
+                <div style={{borderTop: '1px solid var(--border)', paddingTop: 16}}>
+                  <label style={{display: 'block', fontSize: 14, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)'}}>대상 팀원 설정</label>
+                  <div style={{display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center'}}>
+                    <button
+                      onClick={() => {
+                        const isAllSelected = !activeQuiz.visibleTo || activeQuiz.visibleTo.length === 0;
+                        if (isAllSelected) {
+                          setActiveQuiz({ ...activeQuiz, visibleTo: [] });
+                        } else {
+                          setActiveQuiz({ ...activeQuiz, visibleTo: undefined });
+                        }
+                      }}
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 12,
+                        border: 'none',
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        background: (!activeQuiz.visibleTo || activeQuiz.visibleTo.length === 0) ? 'var(--primary)' : 'var(--bg-color)',
+                        color: (!activeQuiz.visibleTo || activeQuiz.visibleTo.length === 0) ? 'white' : 'var(--text-secondary)',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      전체 공개
+                    </button>
+                    {dynamicTeam.map(student => {
+                      const isSelected = activeQuiz.visibleTo?.includes(student.id);
+                      const isAllMode = !activeQuiz.visibleTo || activeQuiz.visibleTo.length === 0;
+                      return (
+                        <button
+                          key={student.id}
+                          onClick={() => {
+                            let currentVisibleTo = activeQuiz.visibleTo ? [...activeQuiz.visibleTo] : [];
+                            if (currentVisibleTo.includes(student.id)) {
+                              currentVisibleTo = currentVisibleTo.filter(id => id !== student.id);
+                            } else {
+                              currentVisibleTo.push(student.id);
+                            }
+                            setActiveQuiz({ ...activeQuiz, visibleTo: currentVisibleTo });
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            borderRadius: 12,
+                            border: isSelected ? '1px solid var(--primary)' : '1px solid var(--border)',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            background: isSelected ? 'rgba(49, 130, 246, 0.1)' : 'var(--surface)',
+                            color: isSelected ? 'var(--primary)' : 'var(--text-secondary)',
+                            transition: 'all 0.2s',
+                            opacity: isAllMode ? 0.6 : 1
+                          }}
+                        >
+                          {student.name} ({student.id})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             </div>
             {activeQuiz.questions.map((q, idx) => (

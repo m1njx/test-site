@@ -186,6 +186,15 @@ export default function App() {
     setShowResults(true);
   };
 
+  // Helper variables for Home view
+  const visibleQuizzes = dynamicQuizzes.filter(q => {
+    if (loggedInUser === ADMIN_ID) return true;
+    if (!q.visibleTo || q.visibleTo.length === 0) return true;
+    return q.visibleTo.includes(loggedInUser);
+  });
+  const validQuizzes = visibleQuizzes.filter(q => q.questions.length > 0);
+  const completionRate = validQuizzes.length > 0 ? Math.round((studentProgress.length / validQuizzes.length) * 100) : 0;
+
   // Helper variables for Quiz view
   const questions = selectedQuiz?.questions || [];
   const currentQuestion = questions[currentQuestionIdx];
@@ -220,10 +229,10 @@ export default function App() {
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, boxShadow: 'var(--shadow-sm)', marginBottom: 32}}>
               <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 12}}>
                 <span style={{fontWeight: 700}}>나의 완주율</span>
-                <span style={{fontWeight: 800, color: 'var(--primary)'}}>{Math.round((studentProgress.length / (dynamicQuizzes.filter(q => q.questions.length > 0).length || 1)) * 100)}%</span>
+                <span style={{fontWeight: 800, color: 'var(--primary)'}}>{completionRate}%</span>
               </div>
               <div style={{height: 12, background: 'var(--bg-color)', borderRadius: 6, overflow: 'hidden'}}>
-                <div style={{height: '100%', background: 'var(--primary)', width: `${(studentProgress.length / (dynamicQuizzes.filter(q => q.questions.length > 0).length || 1)) * 100}%`, transition: 'width 1s ease-out'}} />
+                <div style={{height: '100%', background: 'var(--primary)', width: `${completionRate}%`, transition: 'width 1s ease-out'}} />
               </div>
             </div>
           )}
@@ -231,7 +240,7 @@ export default function App() {
           <h1 className="home-title">일일 퀴즈 점검</h1>
           <p className="home-subtitle">날짜별로 할당된 문제를 풀고 실력을 점검하세요.</p>
           <div className="quiz-list">
-            {dynamicQuizzes.map((q) => {
+            {visibleQuizzes.map((q) => {
               const p = studentProgress.find(p => p.quizId === q.id);
               const isCompleted = !!p;
               const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID);
@@ -240,6 +249,11 @@ export default function App() {
                   <div className="quiz-info">
                     <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? '#27AE60' : 'var(--primary)')}}>
                       <Calendar size={12} style={{display: 'inline', marginRight: 4}}/> {q.date} {isCompleted && '✓ 완료'} {q.isPublished === false && '(비공개)'}
+                      {loggedInUser === ADMIN_ID && q.visibleTo && q.visibleTo.length > 0 && (
+                        <span style={{marginLeft: 8, padding: '2px 6px', background: 'rgba(49, 130, 246, 0.1)', color: 'var(--primary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
+                          대상: {q.visibleTo.length}명
+                        </span>
+                      )}
                     </div>
                     <h3 className="quiz-name">{q.title}</h3>
                     <p className="quiz-desc">{q.description}</p>
