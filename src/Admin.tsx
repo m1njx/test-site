@@ -65,7 +65,7 @@ async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctA
   }
 
   const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 
-다음 질문에 대해 학생들이 참고할 수 있는 가장 완벽하고 이상적인 모범 답안(코드 또는 개념 설명)과 상세한 해설을 제공해줘.
+다음 질문에 대해 학생들이 참고할 수 있는 가장 완벽하고 이상적인 모범 답안(코드 또는 개념 설명)과 핵심 요약 해설을 제공해줘.
 
 [문제 정보]
 - 질문: ${qTitle}
@@ -73,7 +73,7 @@ async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctA
 
 [제공 규칙]
 1. 이 질문에 대한 가장 모범적인 정답/코드(HTML/CSS/JS/Python 등 문제에 맞는 형식)를 'correctAnswer' field에 제공해주세요.
-2. 이 질문의 개념에 대한 상세한 해설과 올바른 접근법을 'explanation' field에 한국어로 작성해주세요.
+2. 이 질문의 핵심 개념에 대해 누구나 단번에 직관적으로 이해할 수 있도록 구구절절한 전문 용어 서술을 완전히 배제하고, 핵심 내용만 딱 요약하여 2~3문장 이내로 아주 간결하게 'explanation' field에 한국어로 작성해주세요.
 3. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
 
 응답 형식:
@@ -477,7 +477,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                   setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: true } }));
                                   try {
                                     const correctTexts = q.correctAnswers.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-                                    const prompt = `이 객관식 질문과 정답에 대한 상세한 개념 설명 및 해설을 한국어로 작성해주세요.
+                                    const prompt = `이 객관식 질문과 정답에 대한 개념 해설을 핵심 요점 위주로 아주 간결하고 명확하게 한국어로 작성해주세요. 누구나 단번에 직관적으로 이해할 수 있도록 구구절절한 전문 용어의 나열이나 해설은 완전히 피하고, 2~3문장 이내로 핵심 요점만 명확하게 요약해 주세요.
 질문: ${q.title}
 선택지: ${q.options?.join(', ')}
 정답: ${correctTexts}`;
