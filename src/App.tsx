@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
-import { quizzes, type Quiz } from './data';
+import { quizzes, type Quiz, type Question } from './data';
 import { ADMIN_ID, getStudentName, type Student } from './team';
 import { saveScore, getStudentProgress, getQuizzes, getStudents, type Progress } from './api';
 import Login from './Login';
@@ -12,6 +12,67 @@ declare global {
   interface Window {
     loadPyodide: (config?: any) => Promise<any>;
   }
+}
+
+async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string }> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  if (!apiKey) {
+    throw new Error('Gemini API key is not configured');
+  }
+  
+  const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 학생이 제출한 코드 또는 답변을 엄격하지 않고 너그럽게 채점해줘.
+의미가 통하거나, 문제의 핵심 요소를 충족하거나, 로직상 일치하면 정답으로 인정해야 해.
+
+[문제 정보]
+- 질문: ${q.title}
+- 설명: ${q.description}
+- 초기 코드 (있는 경우): ${q.setupCode || '없음'}
+- 모범답안 및 해설: ${q.explanation}
+
+[학생이 제출한 답안]
+${userAns}
+
+[채점 규칙]
+1. 완벽한 일치가 아니더라도 논리적 의미나 실행 결과가 같으면 정답(isCorrect: true) 처리합니다.
+2. 개념 확인 질문의 경우, 모범답안의 핵심 개념이나 키워드가 언급되었다면 정답 처리합니다.
+3. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
+
+응답 형식:
+{
+  "isCorrect": true 또는 false,
+  "reason": "채점 사유 요약 (한국어)"
+}`;
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        responseMimeType: 'application/json'
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.statusText}`);
+  }
+
+  const json = await response.json();
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error('Empty response from Gemini');
+  }
+
+  const result = JSON.parse(text.trim());
+  return {
+    isCorrect: !!result.isCorrect,
+    reason: result.reason || ''
+  };
 }
 
 export default function App() {
@@ -34,7 +95,7 @@ export default function App() {
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState<Record<string, boolean>>({});
+  const [results, setResults] = useState<Record<string, any>>({});
   const [pyodide, setPyodide] = useState<any>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [studentProgress, setStudentProgress] = useState<Progress[]>([]);
@@ -150,33 +211,51 @@ export default function App() {
   const gradeQuiz = async () => {
     setIsGrading(true);
     const gradingResults: Record<string, boolean> = {};
+    const fullResults: Record<string, any> = {};
     let correctCount = 0;
     const questions = selectedQuiz!.questions;
     for (const q of questions) {
       const userAns = answers[q.id];
       if (!userAns) { gradingResults[q.id] = false; continue; }
-      if (q.type === 'short' && pyodide) {
+      if (q.type === 'short') {
         const u = typeof userAns === 'string' ? userAns : '';
+        let graded = false;
+        
         try {
-          pyodide.runPython(`locals().clear()`);
-          if (q.setupCode) pyodide.runPython(q.setupCode);
-          let userRes = null;
-          try { userRes = pyodide.runPython(u); } catch (e) { console.log(`Execution error in Q${q.id}:`, e); }
-          pyodide.globals.set('_user_result', userRes);
-          const isCorrect = pyodide.runPython(q.validationCode || 'False');
-          gradingResults[q.id] = isCorrect === true;
-        } catch (e) { gradingResults[q.id] = false; }
+          const geminiResult = await gradeWithGemini(q, u);
+          gradingResults[q.id] = geminiResult.isCorrect;
+          fullResults[`reason_${q.id}`] = geminiResult.reason;
+          graded = true;
+        } catch (e) {
+          console.warn("Gemini grading failed, falling back to Pyodide:", e);
+        }
+        
+        if (!graded && pyodide) {
+          try {
+            pyodide.runPython(`locals().clear()`);
+            if (q.setupCode) pyodide.runPython(q.setupCode);
+            let userRes = null;
+            try { userRes = pyodide.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
+            pyodide.globals.set('_user_result', userRes);
+            const isCorrect = pyodide.runPython(q.validationCode || 'False');
+            gradingResults[q.id] = isCorrect === true;
+          } catch (err) {
+            gradingResults[q.id] = false;
+          }
+        }
       } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
         const u = Array.isArray(userAns) ? userAns : [userAns];
         gradingResults[q.id] = u.length === q.correctAnswers.length && [...u].sort().join(',') === [...q.correctAnswers].sort().join(',');
       } else { gradingResults[q.id] = false; }
       if (gradingResults[q.id]) correctCount++;
     }
-    setResults(gradingResults);
-    const fullResults: Record<string, any> = { ...gradingResults };
+
+    Object.assign(fullResults, gradingResults);
     questions.forEach(q => {
       fullResults[`ans_${q.id}`] = answers[q.id];
     });
+
+    setResults(fullResults);
 
     try {
       await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
@@ -283,12 +362,13 @@ export default function App() {
                       <strong style={{fontSize: 16}}>{q.title}</strong>
                       {results[q.id] ? <CheckCircle2 color="#27AE60" size={20} /> : <AlertCircle color="#E74C3C" size={20} />}
                     </div>
-                    {!results[q.id] && (
-                      <div style={{fontSize: 14, color: 'var(--text-secondary)', padding: 12, background: 'var(--bg-color)', borderRadius: 12}}>
-                        <div style={{marginBottom: 8}}><strong style={{color: '#E74C3C'}}>내 답변:</strong> {Array.isArray(answers[q.id]) ? (answers[q.id] as string[]).join(', ') : (answers[q.id] || '(없음)')}</div>
-                        <div><strong>해설:</strong> {q.explanation}</div>
-                      </div>
-                    )}
+                    <div style={{fontSize: 14, color: 'var(--text-secondary)', padding: 12, background: 'var(--bg-color)', borderRadius: 12}}>
+                      <div style={{marginBottom: 8}}><strong style={{color: results[q.id] ? '#27AE60' : '#E74C3C'}}>내 답변:</strong> {Array.isArray(answers[q.id]) ? (answers[q.id] as string[]).join(', ') : (answers[q.id] || '(없음)')}</div>
+                      {results[`reason_${q.id}`] && (
+                        <div style={{marginBottom: 8, color: 'var(--primary)', fontWeight: 600}}>🤖 AI 피드백: {results[`reason_${q.id}`]}</div>
+                      )}
+                      {!results[q.id] && <div><strong>해설:</strong> {q.explanation}</div>}
+                    </div>
                   </div>
                 ))}
               </div>

@@ -170,6 +170,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                     {quiz.questions.map((q, qIdx) => {
                       const isCorrect = result.detailedResults?.[q.id];
                       const studentAns = result.detailedResults ? result.detailedResults[`ans_${q.id}`] : undefined;
+                      const aiReason = result.detailedResults ? result.detailedResults[`reason_${q.id}`] : undefined;
 
                       return (
                         <div key={q.id} style={{padding: 12, background: 'var(--surface)', borderRadius: 12, border: `1px solid ${isCorrect ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`}}>
@@ -182,6 +183,11 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             <div style={{marginTop: 8, fontSize: 13}}>
                               <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
                               <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 12, overflowX: 'auto', fontFamily: 'monospace'}}>{studentAns || '(답변 없음)'}</pre>
+                              {aiReason && (
+                                <div style={{marginTop: 6, color: 'var(--primary)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4}}>
+                                  🤖 AI 채점 사유: {aiReason}
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div style={{marginTop: 8, fontSize: 13}}>
@@ -191,6 +197,11 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                   ? studentAns.map(idx => q.options?.[parseInt(idx)]).join(', ') 
                                   : (typeof studentAns === 'string' ? q.options?.[parseInt(studentAns)] : '(답변 없음)')}
                               </div>
+                              {aiReason && (
+                                <div style={{marginTop: 6, color: 'var(--primary)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4}}>
+                                  🤖 AI 채점 사유: {aiReason}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
