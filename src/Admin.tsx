@@ -12,12 +12,72 @@ interface AdminProps {
   onRefreshTeam: () => void;
 }
 
+async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctAnswer: string; explanation: string }> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  if (!apiKey) {
+    throw new Error('Gemini API key is not configured');
+  }
+
+  const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 
+다음 질문에 대해 학생들이 참고할 수 있는 가장 완벽하고 이상적인 모범 답안(코드 또는 개념 설명)과 상세한 해설을 제공해줘.
+
+[문제 정보]
+- 질문: ${qTitle}
+- 설명: ${qDesc}
+
+[제공 규칙]
+1. 이 질문에 대한 가장 모범적인 정답/코드(HTML/CSS/JS/Python 등 문제에 맞는 형식)를 'correctAnswer' field에 제공해주세요.
+2. 이 질문의 개념에 대한 상세한 해설과 올바른 접근법을 'explanation' field에 한국어로 작성해주세요.
+3. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
+
+응답 형식:
+{
+  "correctAnswer": "모범 답안 코드 또는 개념 텍스트",
+  "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
+}`;
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [{
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        responseMimeType: 'application/json'
+      }
+    })
+  });
+
+  if (!response.ok) throw new Error(`API error: ${response.statusText}`);
+
+  const json = await response.json();
+  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Empty response from Gemini');
+
+  let cleanText = text.trim();
+  if (cleanText.includes('```')) {
+    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match) cleanText = match[1].trim();
+    else cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+  }
+
+  const result = JSON.parse(cleanText);
+  return {
+    correctAnswer: result.correctAnswer || '',
+    explanation: result.explanation || ''
+  };
+}
+
 export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, onRefreshTeam }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team'>('results');
   const [selectedQuizId, setSelectedQuizId] = useState(dynamicQuizzes[0]?.id || '');
   const [results, setResults] = useState<Progress[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+  const [aiPreviews, setAiPreviews] = useState<Record<string, { correctAnswer: string; explanation: string; loading?: boolean; error?: string }>>({});
 
   // Team Editor State
   const [newStudent, setNewStudent] = useState({ id: '', name: '' });
@@ -54,6 +114,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       const copy = JSON.parse(JSON.stringify(quizToEdit));
       if (copy.isPublished === undefined) copy.isPublished = true;
       setActiveQuiz(copy);
+      setAiPreviews({});
       setActiveTab('create');
     }
   };
@@ -275,15 +336,18 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
                 <h2 style={{fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8}}><FileText size={20} color="var(--primary)"/> 퀴즈 설정</h2>
                 <div style={{display: 'flex', gap: 8}}>
-                  <button onClick={() => setActiveQuiz({
-                    id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`,
-                    date: new Date().toISOString().split('T')[0],
-                    title: '',
-                    description: '',
-                    questions: [],
-                    isPublished: true,
-                    visibleTo: undefined
-                  })} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 12, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14}}>
+                  <button onClick={() => {
+                    setActiveQuiz({
+                      id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`,
+                      date: new Date().toISOString().split('T')[0],
+                      title: '',
+                      description: '',
+                      questions: [],
+                      isPublished: true,
+                      visibleTo: undefined
+                    });
+                    setAiPreviews({});
+                  }} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 12, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14}}>
                     새 퀴즈
                   </button>
                   <button onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', background: activeQuiz.isPublished ? 'rgba(39, 174, 96, 0.1)' : 'rgba(139, 149, 161, 0.1)', color: activeQuiz.isPublished ? '#27AE60' : 'var(--text-secondary)', fontWeight: 700, fontSize: 14}}>
@@ -367,6 +431,73 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   <input type="text" placeholder="질문" value={q.title} onChange={(e) => updateQuestion(q.id, {title: e.target.value})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}/>
                   {q.type !== 'short' && (
                     <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14}}/>
+                  )}
+                  {q.type === 'short' && (
+                    <div style={{display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8}}>
+                      <button
+                        onClick={async () => {
+                          if (!q.title.trim()) {
+                            alert('질문을 먼저 입력해 주세요.');
+                            return;
+                          }
+                          setAiPreviews(prev => ({ ...prev, [q.id]: { correctAnswer: '', explanation: '', loading: true } }));
+                          try {
+                            const res = await fetchAiPreview(q.title, q.description || '');
+                            setAiPreviews(prev => ({ ...prev, [q.id]: { ...res, loading: false } }));
+                          } catch (err) {
+                            setAiPreviews(prev => ({ ...prev, [q.id]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 모범 답안 로딩 실패' } }));
+                          }
+                        }}
+                        disabled={aiPreviews[q.id]?.loading}
+                        style={{
+                          alignSelf: 'flex-start',
+                          background: 'rgba(49, 130, 246, 0.1)',
+                          color: 'var(--primary)',
+                          border: 'none',
+                          padding: '10px 16px',
+                          borderRadius: 12,
+                          fontWeight: 700,
+                          fontSize: 13,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          outline: 'none',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        {aiPreviews[q.id]?.loading ? (
+                          <>
+                            <RefreshCw className="animate-spin" size={14} /> AI 분석 및 답안 생성 중...
+                          </>
+                        ) : (
+                          <>✨ AI 모범 답안 및 해설 미리보기</>
+                        )}
+                      </button>
+
+                      {aiPreviews[q.id] && !aiPreviews[q.id].loading && (
+                        <div style={{background: 'var(--bg-color)', padding: 16, borderRadius: 16, border: '1px solid var(--border)', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 12}}>
+                          {aiPreviews[q.id].error ? (
+                            <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[q.id].error}</div>
+                          ) : (
+                            <>
+                              <div>
+                                <div style={{color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, marginBottom: 4}}>💡 생성된 AI 모범 답안:</div>
+                                <pre style={{margin: 0, padding: 10, background: 'var(--surface)', borderRadius: 8, fontSize: 12, fontFamily: 'monospace', overflowX: 'auto', border: '1px solid var(--border)'}}>
+                                  {aiPreviews[q.id].correctAnswer}
+                                </pre>
+                              </div>
+                              <div>
+                                <div style={{color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, marginBottom: 4}}>💡 생성된 AI 상세 해설:</div>
+                                <div style={{color: 'var(--text-secondary)', lineHeight: 1.5}}>
+                                  {aiPreviews[q.id].explanation}
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
