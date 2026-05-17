@@ -14,6 +14,49 @@ declare global {
   }
 }
 
+const GEMINI_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-pro'
+];
+
+async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`Trying Gemini model in student mode: ${model}`);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json'
+          }
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`API error ${response.status}: ${response.statusText}`);
+      }
+      const json = await response.json();
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        throw new Error('Empty response');
+      }
+      return text;
+    } catch (e) {
+      console.warn(`Model ${model} failed:`, e);
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('All Gemini models failed');
+}
+
 async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string; correctAnswer?: string; explanation?: string }> {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -46,30 +89,7 @@ ${userAns}
   "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
 }`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        responseMimeType: 'application/json'
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.statusText}`);
-  }
-
-  const json = await response.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    throw new Error('Empty response from Gemini');
-  }
+  const text = await callGeminiWithFallback(apiKey, prompt);
 
   let cleanText = text.trim();
   if (cleanText.includes('```')) {
@@ -265,7 +285,18 @@ export default function App() {
         }
       } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
         const u = Array.isArray(userAns) ? userAns : [userAns];
-        gradingResults[q.id] = u.length === q.correctAnswers.length && [...u].sort().join(',') === [...q.correctAnswers].sort().join(',');
+        const isCorrect = u.length === q.correctAnswers.length && [...u].sort().join(',') === [...q.correctAnswers].sort().join(',');
+        gradingResults[q.id] = isCorrect;
+        
+        try {
+          const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+          const correctTexts = q.correctAnswers.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+          const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
+          fullResults[`reason_${q.id}`] = geminiResult.reason;
+          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
+        } catch (e) {
+          console.warn("Gemini explanation failed for multiple-choice:", e);
+        }
       } else { gradingResults[q.id] = false; }
       if (gradingResults[q.id]) correctCount++;
     }

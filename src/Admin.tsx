@@ -12,6 +12,49 @@ interface AdminProps {
   onRefreshTeam: () => void;
 }
 
+const GEMINI_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+  'gemini-pro'
+];
+
+async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`Trying Gemini model in admin mode: ${model}`);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json'
+          }
+        })
+      });
+      if (!response.ok) {
+        throw new Error(`API error ${response.status}: ${response.statusText}`);
+      }
+      const json = await response.json();
+      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) {
+        throw new Error('Empty response');
+      }
+      return text;
+    } catch (e) {
+      console.warn(`Model ${model} failed in admin preview:`, e);
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('All Gemini models failed');
+}
+
 async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctAnswer: string; explanation: string }> {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -36,26 +79,7 @@ async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctA
   "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
 }`;
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
-      generationConfig: {
-        responseMimeType: 'application/json'
-      }
-    })
-  });
-
-  if (!response.ok) throw new Error(`API error: ${response.statusText}`);
-
-  const json = await response.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from Gemini');
+  const text = await callGeminiWithFallback(apiKey, prompt);
 
   let cleanText = text.trim();
   if (cleanText.includes('```')) {
@@ -444,6 +468,60 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                 })}
                               </div>
                             </div>
+                            <div style={{marginTop: 10}}>
+                              <button
+                                onClick={async () => {
+                                  setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: true } }));
+                                  try {
+                                    const correctTexts = q.correctAnswers.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+                                    const prompt = `이 객관식 질문과 정답에 대한 상세한 개념 설명 및 해설을 한국어로 작성해주세요.
+질문: ${q.title}
+선택지: ${q.options?.join(', ')}
+정답: ${correctTexts}`;
+                                    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+                                    if (!apiKey) throw new Error('API key not configured');
+                                    
+                                    const text = await callGeminiWithFallback(apiKey, prompt);
+                                    setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: correctTexts, explanation: text, loading: false } }));
+                                  } catch (err) {
+                                    setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 해설 로딩 실패' } }));
+                                  }
+                                }}
+                                disabled={aiPreviews[`quiz_${q.id}`]?.loading}
+                                style={{
+                                  background: 'var(--surface)',
+                                  border: '1px solid var(--border)',
+                                  color: 'var(--primary)',
+                                  padding: '6px 12px',
+                                  borderRadius: 8,
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  marginTop: 10,
+                                  outline: 'none'
+                                }}
+                              >
+                                {aiPreviews[`quiz_${q.id}`]?.loading ? (
+                                  <RefreshCw className="animate-spin" size={12} />
+                                ) : '✨ AI 해설 및 분석 미리보기'}
+                              </button>
+
+                              {aiPreviews[`quiz_${q.id}`] && !aiPreviews[`quiz_${q.id}`].loading && (
+                                <div style={{marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8}}>
+                                  {aiPreviews[`quiz_${q.id}`].error ? (
+                                    <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
+                                  ) : (
+                                    <div>
+                                      <div style={{fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 2}}>AI 분석 해설:</div>
+                                      <div style={{fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4}}>{aiPreviews[`quiz_${q.id}`].explanation}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                             {q.explanation && (
                               <div style={{marginTop: 8, fontSize: 12, color: 'var(--text-secondary)', borderTop: '1px dashed var(--border)', paddingTop: 8}}>
                                 <strong>해설:</strong> {q.explanation}
@@ -625,7 +703,6 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                       >
                         + 보기 추가
                       </button>
-                      <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="정답 상세 해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, marginTop: 8}}/>
                     </div>
                   )}
                   {q.type === 'short' && (
