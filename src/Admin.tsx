@@ -171,6 +171,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                       const isCorrect = result.detailedResults?.[q.id];
                       const studentAns = result.detailedResults ? result.detailedResults[`ans_${q.id}`] : undefined;
                       const aiReason = result.detailedResults ? result.detailedResults[`reason_${q.id}`] : undefined;
+                      const aiAns = result.detailedResults ? result.detailedResults[`ai_ans_${q.id}`] : undefined;
+                      const aiExp = result.detailedResults ? result.detailedResults[`ai_exp_${q.id}`] : undefined;
 
                       return (
                         <div key={q.id} style={{padding: 12, background: 'var(--surface)', borderRadius: 12, border: `1px solid ${isCorrect ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`}}>
@@ -183,11 +185,6 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             <div style={{marginTop: 8, fontSize: 13}}>
                               <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
                               <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 12, overflowX: 'auto', fontFamily: 'monospace'}}>{studentAns || '(답변 없음)'}</pre>
-                              {aiReason && (
-                                <div style={{marginTop: 6, color: 'var(--primary)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4}}>
-                                  🤖 AI 채점 사유: {aiReason}
-                                </div>
-                              )}
                             </div>
                           ) : (
                             <div style={{marginTop: 8, fontSize: 13}}>
@@ -197,9 +194,26 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                   ? studentAns.map(idx => q.options?.[parseInt(idx)]).join(', ') 
                                   : (typeof studentAns === 'string' ? q.options?.[parseInt(studentAns)] : '(답변 없음)')}
                               </div>
-                              {aiReason && (
-                                <div style={{marginTop: 6, color: 'var(--primary)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4}}>
-                                  🤖 AI 채점 사유: {aiReason}
+                            </div>
+                          )}
+                          
+                          {aiReason && (
+                            <div style={{marginTop: 8, color: 'var(--primary)', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4}}>
+                              🤖 AI 피드백: {aiReason}
+                            </div>
+                          )}
+                          
+                          {(aiAns || aiExp) && (
+                            <div style={{marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8}}>
+                              {aiAns && (
+                                <div style={{marginBottom: 6}}>
+                                  <div style={{color: 'var(--text-secondary)', fontSize: 11, fontWeight: 700, marginBottom: 2}}>💡 AI 모범 답안:</div>
+                                  <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', overflowX: 'auto'}}>{aiAns}</pre>
+                                </div>
+                              )}
+                              {aiExp && (
+                                <div style={{fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4}}>
+                                  <strong>💡 AI 상세 해설:</strong> {aiExp}
                                 </div>
                               )}
                             </div>
@@ -351,13 +365,9 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20}}><span style={{background: 'var(--primary)', color: 'white', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800}}>{idx + 1}</span><span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>{q.type === 'short' ? '주관식' : '객관식'}</span></div>
                 <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                   <input type="text" placeholder="질문" value={q.title} onChange={(e) => updateQuestion(q.id, {title: e.target.value})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}/>
-                  {q.type === 'short' && (
-                    <>
-                      <textarea value={q.setupCode} onChange={(e) => updateQuestion(q.id, {setupCode: e.target.value})} placeholder="초기 코드" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, fontFamily: 'monospace'}}/>
-                      <textarea value={q.validationCode} onChange={(e) => updateQuestion(q.id, {validationCode: e.target.value})} placeholder="검증 코드" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14, fontFamily: 'monospace'}}/>
-                    </>
+                  {q.type !== 'short' && (
+                    <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14}}/>
                   )}
-                  <textarea value={q.explanation} onChange={(e) => updateQuestion(q.id, {explanation: e.target.value})} placeholder="해설" style={{width: '100%', padding: 12, borderRadius: 12, border: '1px solid var(--border)', fontSize: 14}}/>
                 </div>
               </div>
             ))}

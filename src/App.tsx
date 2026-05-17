@@ -14,7 +14,7 @@ declare global {
   }
 }
 
-async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string }> {
+async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string; correctAnswer?: string; explanation?: string }> {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
   if (!apiKey) {
     throw new Error('Gemini API key is not configured');
@@ -26,21 +26,24 @@ async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrec
 [문제 정보]
 - 질문: ${q.title}
 - 설명: ${q.description}
-- 초기 코드 (있는 경우): ${q.setupCode || '없음'}
-- 모범답안 및 해설: ${q.explanation}
 
 [학생이 제출한 답안]
 ${userAns}
 
-[채점 규칙]
+[채점 및 분석 규칙]
 1. 완벽한 일치가 아니더라도 논리적 의미나 실행 결과가 같으면 정답(isCorrect: true) 처리합니다.
-2. 개념 확인 질문의 경우, 모범답안의 핵심 개념이나 키워드가 언급되었다면 정답 처리합니다.
-3. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
+2. 개념 확인 질문의 경우, 핵심 개념이나 키워드가 언급되었다면 정답 처리합니다.
+3. 만약 학생의 답안이 오답(isCorrect: false)인 경우, 왜 틀렸는지 구체적으로 분석하고 올바르게 고치는 방법을 'reason' 필드에 친절하게 설명해주세요. (맞은 경우 간단한 칭찬이나 사유 작성)
+4. 이 질문에 대한 가장 모범적인 정답/코드(HTML/CSS/JS/Python 등 문제에 맞는 형식)를 'correctAnswer' 필드에 제공해주세요.
+5. 이 질문의 개념에 대한 상세한 해설과 올바른 접근법을 'explanation' 필드에 한국어로 작성해주세요.
+6. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
 
 응답 형식:
 {
   "isCorrect": true 또는 false,
-  "reason": "채점 사유 요약 (한국어)"
+  "reason": "채점 결과 요약 및 오답인 경우 틀린 이유/피드백 (한국어)",
+  "correctAnswer": "모범 답안 코드 또는 개념 텍스트",
+  "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
 }`;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
@@ -82,7 +85,9 @@ ${userAns}
   const result = JSON.parse(cleanText);
   return {
     isCorrect: !!result.isCorrect,
-    reason: result.reason || ''
+    reason: result.reason || '',
+    correctAnswer: result.correctAnswer || '',
+    explanation: result.explanation || ''
   };
 }
 
@@ -110,6 +115,7 @@ export default function App() {
   const [pyodide, setPyodide] = useState<any>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [studentProgress, setStudentProgress] = useState<Progress[]>([]);
+  const [expandedAnswers, setExpandedAnswers] = useState<Record<string, boolean>>({});
 
   const loadTeam = async () => {
     const students = await getStudents();
@@ -217,6 +223,7 @@ export default function App() {
     setAnswers({});
     setResults({});
     setShowResults(false);
+    setExpandedAnswers({});
   };
 
   const gradeQuiz = async () => {
@@ -236,6 +243,8 @@ export default function App() {
           const geminiResult = await gradeWithGemini(q, u);
           gradingResults[q.id] = geminiResult.isCorrect;
           fullResults[`reason_${q.id}`] = geminiResult.reason;
+          if (geminiResult.correctAnswer) fullResults[`ai_ans_${q.id}`] = geminiResult.correctAnswer;
+          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
           graded = true;
         } catch (e) {
           console.warn("Gemini grading failed, falling back to Pyodide:", e);
@@ -375,10 +384,58 @@ export default function App() {
                     </div>
                     <div style={{fontSize: 14, color: 'var(--text-secondary)', padding: 12, background: 'var(--bg-color)', borderRadius: 12}}>
                       <div style={{marginBottom: 8}}><strong style={{color: results[q.id] ? '#27AE60' : '#E74C3C'}}>내 답변:</strong> {Array.isArray(answers[q.id]) ? (answers[q.id] as string[]).join(', ') : (answers[q.id] || '(없음)')}</div>
+                      
                       {results[`reason_${q.id}`] && (
-                        <div style={{marginBottom: 8, color: 'var(--primary)', fontWeight: 600}}>🤖 AI 피드백: {results[`reason_${q.id}`]}</div>
+                        <div style={{marginBottom: 8, color: results[q.id] ? 'var(--primary)' : '#E74C3C', fontWeight: 600, display: 'flex', gap: 6, alignItems: 'flex-start'}}>
+                          <span>🤖</span>
+                          <div>
+                            <span style={{fontWeight: 700}}>{results[q.id] ? 'AI 피드백: ' : 'AI 오답 분석: '}</span>
+                            {results[`reason_${q.id}`]}
+                          </div>
+                        </div>
                       )}
-                      {!results[q.id] && <div><strong>해설:</strong> {q.explanation}</div>}
+                      
+                      {(results[`ai_ans_${q.id}`] || results[`ai_exp_${q.id}`] || q.explanation) && (
+                        <div style={{marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 8}}>
+                          <button
+                            onClick={() => setExpandedAnswers(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--primary)',
+                              fontWeight: 700,
+                              fontSize: 13,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              padding: 0,
+                              outline: 'none'
+                            }}
+                          >
+                            {expandedAnswers[q.id] ? '▲ 답안 및 해설 접기' : '▼ AI 모범 답안 및 해설 보기'}
+                          </button>
+                          
+                          {expandedAnswers[q.id] && (
+                            <div style={{marginTop: 8, fontSize: 13, color: 'var(--text-secondary)'}}>
+                              {results[`ai_ans_${q.id}`] && (
+                                <div style={{marginBottom: 8}}>
+                                  <div style={{fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 2}}>모범 답안:</div>
+                                  <pre style={{margin: 0, padding: 8, background: 'var(--surface)', borderRadius: 8, fontSize: 12, fontFamily: 'monospace', overflowX: 'auto', border: '1px solid var(--border)'}}>
+                                    {results[`ai_ans_${q.id}`]}
+                                  </pre>
+                                </div>
+                              )}
+                              {(results[`ai_exp_${q.id}`] || q.explanation) && (
+                                <div>
+                                  <div style={{fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 2}}>상세 해설:</div>
+                                  <div style={{lineHeight: 1.5}}>{results[`ai_exp_${q.id}`] || q.explanation}</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
