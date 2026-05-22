@@ -126,8 +126,30 @@ export async function saveQuiz(quiz: Quiz) {
   if (!db) return;
   
   try {
+    // Firestore에 저장하기 전에 undefined 값 제거
+    const cleanedQuiz = {
+      ...quiz,
+      questions: quiz.questions.map(q => {
+        const cleaned: any = {
+          id: q.id,
+          type: q.type,
+          title: q.title || '',
+          description: q.description || '',
+          correctAnswers: q.correctAnswers || [],
+          explanation: q.explanation || ''
+        };
+        // 선택적 필드는 undefined가 아닐 때만 추가
+        if (q.options !== undefined) cleaned.options = q.options;
+        if (q.setupCode !== undefined) cleaned.setupCode = q.setupCode;
+        if (q.validationCode !== undefined) cleaned.validationCode = q.validationCode;
+        if (q.level !== undefined) cleaned.level = q.level;
+        return cleaned;
+      }),
+      visibleTo: quiz.visibleTo && quiz.visibleTo.length > 0 ? quiz.visibleTo : undefined
+    };
+    
     const docRef = doc(db, 'quizzes', quiz.id);
-    await setDoc(docRef, quiz);
+    await setDoc(docRef, cleanedQuiz);
   } catch (error) {
     console.error("Error saving quiz:", error);
     throw error;

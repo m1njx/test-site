@@ -199,7 +199,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       correctAnswers: [],
       explanation: '',
       setupCode: type === 'short' ? '' : undefined,
-      validationCode: type === 'short' ? '' : undefined
+      validationCode: type === 'short' ? '' : undefined,
+      level: 1
     };
     setActiveQuiz(prev => ({ ...prev, questions: [...prev.questions, q] }));
   };

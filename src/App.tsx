@@ -176,7 +176,7 @@ export default function App() {
 
   const handlePasswordSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (adminPassword === "030918") {
+    if (adminPassword === "121600") {
       setShowPasswordModal(false);
       setCurrentView('admin');
     } else {
@@ -522,7 +522,7 @@ export default function App() {
                 <div style={{position: 'relative', marginBottom: 32}}>
                   <input type="password" autoFocus value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} style={{width: '100%', padding: '20px', borderRadius: 20, border: '1px solid var(--border)', fontSize: 16, textAlign: 'center', background: 'var(--bg-color)', color: 'transparent', caretColor: 'var(--primary)', outline: 'none'}} />
                   <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 24, letterSpacing: 8}}>
-                    {adminPassword.split('').map((_, i) => <motion.span key={i} initial={{scale: 0}} animate={{scale: 1}}>🐹</motion.span>)}
+                    {adminPassword.split('').map((_, i) => <motion.span key={i} initial={{scale: 0}} animate={{scale: 1}}>💩</motion.span>)}
                   </div>
                 </div>
                 <div style={{display: 'flex', gap: 16}}>
