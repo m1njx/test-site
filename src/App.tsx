@@ -27,7 +27,7 @@ async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<s
   
   // 성공한 모델이 있으면 먼저 시도
   const modelsToTry = lastSuccessfulModel 
-    ? [lastSuccessfulModel, ...GEMINI_MODELS.filter(m => m !== lastSuccessfulModel)]
+    ? [lastSuccessfulModel, ...GEMINI_MODELS.filter((m: string) => m !== lastSuccessfulModel)]
     : GEMINI_MODELS;
   
   for (const model of modelsToTry) {
