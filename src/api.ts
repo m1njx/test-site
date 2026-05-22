@@ -13,7 +13,7 @@ export interface Progress {
   score: number;
   total: number;
   timestamp: number;
-  detailedResults?: Record<string, boolean>;
+  detailedResults?: Record<string, any>;
 }
 
 // Cache for Firebase results to improve performance
@@ -27,11 +27,16 @@ const FIREBASE_CACHE: {
 
 const CACHE_TTL = 1000 * 30; // 30 seconds cache
 
-export async function saveScore(studentId: string, quizId: string, score: number, total: number, detailedResults?: Record<string, boolean>) {
+export async function saveScore(studentId: string, quizId: string, score: number, total: number, detailedResults?: Record<string, any>) {
   if (!studentId || !quizId) return;
   if (studentId === 'admin') return;
   
-  const data: Progress = { studentId, quizId, score, total, timestamp: Date.now(), detailedResults };
+  // undefined 값을 제거한 정제된 detailedResults
+  const cleanedResults = detailedResults ? Object.fromEntries(
+    Object.entries(detailedResults).filter(([_, v]) => v !== undefined && v !== null && v !== '')
+  ) : undefined;
+  
+  const data: Progress = { studentId, quizId, score, total, timestamp: Date.now(), detailedResults: cleanedResults };
   
   try {
     if (isMock) {
