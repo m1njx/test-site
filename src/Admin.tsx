@@ -13,20 +13,24 @@ interface AdminProps {
 }
 
 const GEMINI_MODELS = [
-  'gemini-2.0-flash',
   'gemini-2.5-flash',
-  'gemini-2.0-flash-lite',
   'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
-  'gemini-pro-latest',
-  'gemini-2.5-pro'
+  'gemini-3.5-flash'
 ];
+
+// 이전에 성공한 모델 기억
+let lastSuccessfulModelAdmin: string | null = null;
 
 async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
   let lastError = null;
   const timeout = 15000; // 15초 타임아웃
   
-  for (const model of GEMINI_MODELS) {
+  // 성공한 모델이 있으면 먼저 시도
+  const modelsToTry = lastSuccessfulModelAdmin 
+    ? [lastSuccessfulModelAdmin, ...GEMINI_MODELS.filter(m => m !== lastSuccessfulModelAdmin)]
+    : GEMINI_MODELS;
+  
+  for (const model of modelsToTry) {
     try {
       console.log(`Trying Gemini model in admin mode: ${model}`);
       
@@ -59,6 +63,10 @@ async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<s
       if (!text) {
         throw new Error('Empty response');
       }
+      
+      // 성공한 모델 기억
+      lastSuccessfulModelAdmin = model;
+      console.log(`Success with model: ${model}`);
       return text;
     } catch (e) {
       console.warn(`Model ${model} failed in admin preview:`, e);
