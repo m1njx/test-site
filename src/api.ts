@@ -127,7 +127,7 @@ export async function saveQuiz(quiz: Quiz) {
   
   try {
     // Firestore에 저장하기 전에 undefined 값 제거
-    const cleanedQuiz = {
+    const cleanedQuiz: any = {
       ...quiz,
       questions: quiz.questions.map(q => {
         const cleaned: any = {
@@ -144,9 +144,13 @@ export async function saveQuiz(quiz: Quiz) {
         if (q.validationCode !== undefined) cleaned.validationCode = q.validationCode;
         if (q.level !== undefined) cleaned.level = q.level;
         return cleaned;
-      }),
-      visibleTo: quiz.visibleTo && quiz.visibleTo.length > 0 ? quiz.visibleTo : undefined
+      })
     };
+    
+    // visibleTo는 값이 있을 때만 추가
+    if (quiz.visibleTo && quiz.visibleTo.length > 0) {
+      cleanedQuiz.visibleTo = quiz.visibleTo;
+    }
     
     const docRef = doc(db, 'quizzes', quiz.id);
     await setDoc(docRef, cleanedQuiz);
