@@ -26,9 +26,15 @@ const GEMINI_MODELS = [
 
 async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
   let lastError = null;
+  const timeout = 15000; // 15초 타임아웃
+  
   for (const model of GEMINI_MODELS) {
     try {
       console.log(`Trying Gemini model in student mode: ${model}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: {
@@ -41,8 +47,12 @@ async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<s
           generationConfig: {
             responseMimeType: 'application/json'
           }
-        })
+        }),
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
+      
       if (!response.ok) {
         throw new Error(`API error ${response.status}: ${response.statusText}`);
       }

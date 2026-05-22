@@ -31,12 +31,35 @@ export async function saveScore(studentId: string, quizId: string, score: number
   if (!studentId || !quizId) return;
   if (studentId === 'admin') return;
   
-  // undefined 값을 제거한 정제된 detailedResults
+  // Firestore 호환 데이터로 정제
+  const cleanValue = (val: any): any => {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val === 'boolean' || typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      const cleaned = val.trim();
+      // 너무 긴 문자열 자르기 (Firestore 한계 대비)
+      return cleaned.length > 5000 ? cleaned.substring(0, 5000) : cleaned;
+    }
+    if (Array.isArray(val)) {
+      return val.map(v => cleanValue(v)).filter(v => v !== undefined);
+    }
+    return undefined; // 객체나 다른 타입은 제거
+  };
+
   const cleanedResults = detailedResults ? Object.fromEntries(
-    Object.entries(detailedResults).filter(([_, v]) => v !== undefined && v !== null && v !== '')
+    Object.entries(detailedResults)
+      .map(([k, v]) => [k, cleanValue(v)])
+      .filter(([_, v]) => v !== undefined)
   ) : undefined;
   
-  const data: Progress = { studentId, quizId, score, total, timestamp: Date.now(), detailedResults: cleanedResults };
+  const data: Progress = { 
+    studentId, 
+    quizId, 
+    score, 
+    total, 
+    timestamp: Date.now(), 
+    detailedResults: Object.keys(cleanedResults || {}).length > 0 ? cleanedResults : undefined
+  };
   
   try {
     if (isMock) {
