@@ -176,7 +176,7 @@ export default function App() {
 
   const handlePasswordSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (adminPassword === "030918") {
+    if (adminPassword === "121600") {
       setShowPasswordModal(false);
       setCurrentView('admin');
     } else {
