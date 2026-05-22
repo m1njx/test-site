@@ -16,7 +16,7 @@ declare global {
 
 // .env에서 모델 목록 읽기 (쉼표로 구분)
 const GEMINI_MODELS_ENV = import.meta.env.VITE_GEMINI_MODELS || 'gemini-2.0-flash,gemini-1.5-pro,gemini-1.5-flash';
-const GEMINI_MODELS = GEMINI_MODELS_ENV.split(',').map(m => m.trim()).filter(m => m);
+const GEMINI_MODELS = GEMINI_MODELS_ENV.split(',').map((m: string) => m.trim()).filter((m: string) => m);
 
 // 이전에 성공한 모델 기억
 let lastSuccessfulModel: string | null = null;
