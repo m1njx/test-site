@@ -1,31 +1,34 @@
 import React, { useState } from 'react';
-import type { Student } from './team';
-import { ADMIN_ID } from './team';
+import { verifyStudent } from './api';
 import { LogIn } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (studentId: string) => void;
-  dynamicTeam: Student[];
 }
 
-export default function Login({ onLogin, dynamicTeam }: LoginProps) {
+export default function Login({ onLogin }: LoginProps) {
   const [studentId, setStudentId] = useState('');
   const [error, setError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!studentId.trim()) return;
+    if (!studentId.trim() || isLoggingIn) return;
 
-    if (studentId === ADMIN_ID) {
-      onLogin(studentId);
-      return;
-    }
+    setIsLoggingIn(true);
+    setError('');
 
-    const member = dynamicTeam.find(m => m.id === studentId);
-    if (member) {
-      onLogin(studentId);
-    } else {
-      setError('등록되지 않은 학번입니다.');
+    try {
+      const member = await verifyStudent(studentId);
+      if (member) {
+        onLogin(studentId);
+      } else {
+        setError('등록되지 않은 학번입니다.');
+      }
+    } catch (err) {
+      setError('로그인 중 오류가 발생했습니다.');
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -39,6 +42,7 @@ export default function Login({ onLogin, dynamicTeam }: LoginProps) {
           type="text"
           placeholder="학번 입력 (예: 20201111)"
           value={studentId}
+          disabled={isLoggingIn}
           onChange={(e) => {
             setStudentId(e.target.value);
             setError('');
@@ -58,9 +62,9 @@ export default function Login({ onLogin, dynamicTeam }: LoginProps) {
         
         {error && <p style={{color: '#E74C3C', fontSize: 14, marginBottom: 24}}>{error}</p>}
         
-        <button type="submit" className="btn btn-primary" style={{width: '100%', justifyContent: 'center'}}>
-          입장하기
-          <LogIn size={20} />
+        <button type="submit" className="btn btn-primary" style={{width: '100%', justifyContent: 'center'}} disabled={isLoggingIn}>
+          {isLoggingIn ? '확인 중...' : '입장하기'}
+          {!isLoggingIn && <LogIn size={20} />}
         </button>
       </form>
     </div>

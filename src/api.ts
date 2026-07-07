@@ -246,6 +246,26 @@ export async function getStudents(): Promise<any[]> {
   }
 }
 
+export async function verifyStudent(studentId: string): Promise<any | null> {
+  if (!studentId) return null;
+  if (studentId === ADMIN_ID) {
+    return { id: ADMIN_ID, name: "강민제" };
+  }
+  try {
+    if (isMock) return null;
+    if (!db) return null;
+    const docRef = doc(db, 'students', studentId);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (error) {
+    console.error("Error verifying student:", error);
+    return null;
+  }
+}
+
 export async function saveStudent(student: { id: string, name: string }) {
   if (isMock) return;
   if (!db) return;

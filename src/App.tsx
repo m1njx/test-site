@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
-import { ADMIN_ID, getStudentName, type Student } from './team';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress } from './api';
+import { ADMIN_ID, type Student } from './team';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress, verifyStudent } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import './index.css';
@@ -58,6 +58,7 @@ export default function App() {
   const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
     return localStorage.getItem('aim_team_user');
   });
+  const [loggedInStudent, setLoggedInStudent] = useState<Student | null>(null);
 
   useEffect(() => {
     if (loggedInUser) {
@@ -65,6 +66,18 @@ export default function App() {
     } else {
       localStorage.removeItem('aim_team_user');
     }
+  }, [loggedInUser]);
+
+  useEffect(() => {
+    const fetchStudent = async () => {
+      if (loggedInUser) {
+        const student = await verifyStudent(loggedInUser);
+        setLoggedInStudent(student);
+      } else {
+        setLoggedInStudent(null);
+      }
+    };
+    fetchStudent();
   }, [loggedInUser]);
   
   const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin'>('home');
@@ -157,7 +170,6 @@ export default function App() {
 
   useEffect(() => {
     loadQuizzes();
-    loadTeam();
     loadAnnouncements();
   }, []);
 
@@ -174,6 +186,7 @@ export default function App() {
     const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD;
     if (adminPassword === correctPassword && correctPassword) {
       setShowPasswordModal(false);
+      loadTeam();
       setCurrentView('admin');
     } else {
       alert("비밀번호가 틀렸습니다.");
@@ -214,7 +227,7 @@ export default function App() {
     }
   }, [loggedInUser, currentView, fetchProgress]);
 
-  if (!loggedInUser) return <Login onLogin={setLoggedInUser} dynamicTeam={dynamicTeam} />;
+  if (!loggedInUser) return <Login onLogin={setLoggedInUser} />;
 
   const startQuiz = (quiz: Quiz) => {
     if (quiz.questions.length === 0) return;
@@ -380,7 +393,7 @@ export default function App() {
         <div className="home-container" style={{paddingTop: 24}}>
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24}}>
             <div style={{fontWeight: 700, color: 'var(--text-secondary)'}}>
-              안녕하세요, <span style={{color: 'var(--primary)'}}>{getStudentName(loggedInUser, dynamicTeam)}</span>님
+              안녕하세요, <span style={{color: 'var(--primary)'}}>{loggedInStudent?.name || (loggedInUser === ADMIN_ID ? "강민제" : "로딩 중...")}</span>님
             </div>
             <div style={{display: 'flex', alignItems: 'center', gap: 16}}>
               <button onClick={() => setIsDarkMode(!isDarkMode)} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center'}}>
