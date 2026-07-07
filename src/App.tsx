@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
-import { quizzes, type Quiz, type Question } from './data';
+import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, getStudentName, type Student } from './team';
 import { saveScore, getStudentProgress, getQuizzes, getStudents, type Progress } from './api';
 import Login from './Login';
@@ -14,121 +14,7 @@ declare global {
   }
 }
 
-// .env에서 모델 목록 읽기 (쉼표로 구분)
-const GEMINI_MODELS_ENV = import.meta.env.VITE_GEMINI_MODELS || 'gemini-2.0-flash,gemini-1.5-pro,gemini-1.5-flash';
-const GEMINI_MODELS = GEMINI_MODELS_ENV.split(',').map((m: string) => m.trim()).filter((m: string) => m);
-
-// 이전에 성공한 모델 기억
-let lastSuccessfulModel: string | null = null;
-
-async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
-  let lastError = null;
-  const timeout = 15000; // 15초 타임아웃
-  
-  // 성공한 모델이 있으면 먼저 시도
-  const modelsToTry = lastSuccessfulModel 
-    ? [lastSuccessfulModel, ...GEMINI_MODELS.filter((m: string) => m !== lastSuccessfulModel)]
-    : GEMINI_MODELS;
-  
-  for (const model of modelsToTry) {
-    try {
-      console.log(`Trying Gemini model in student mode: ${model}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            responseMimeType: 'application/json'
-          }
-        }),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`API error ${response.status}: ${response.statusText}`);
-      }
-      const json = await response.json();
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new Error('Empty response');
-      }
-      
-      // 성공한 모델 기억
-      lastSuccessfulModel = model;
-      console.log(`Success with model: ${model}`);
-      return text;
-    } catch (e) {
-      console.warn(`Model ${model} failed:`, e);
-      lastError = e;
-    }
-  }
-  throw lastError || new Error('All Gemini models failed');
-}
-
-async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string; correctAnswer?: string; explanation?: string }> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
-  if (!apiKey) {
-    throw new Error('Gemini API key is not configured');
-  }
-  
-  const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 학생이 제출한 코드 또는 답변을 엄격하지 않고 너그럽게 채점해줘.
-의미가 통하거나, 문제의 핵심 요소를 충족하거나, 로직상 일치하면 정답으로 인정해야 해.
-
-[문제 정보]
-- 질문: ${q.title}
-- 설명: ${q.description}
-
-[학생이 제출한 답안]
-${userAns}
-
-[채점 및 분석 규칙]
-1. 완벽한 일치가 아니더라도 논리적 의미나 실행 결과가 같으면 정답(isCorrect: true) 처리합니다.
-2. 개념 확인 질문의 경우, 핵심 개념이나 키워드가 언급되었다면 정답 처리합니다.
-3. 만약 학생의 답안이 오답(isCorrect: false)인 경우, 왜 틀렸는지 핵심 원인을 아주 쉽고 직관적으로 1~2문장 이내로 친절하게 설명해주세요. (맞은 경우 간단한 칭찬 작성)
-4. 이 질문에 대한 가장 모범적인 정답/코드(HTML/CSS/JS/Python 등 문제에 맞는 형식)를 'correctAnswer' 필드에 제공해주세요.
-5. 이 질문의 핵심 개념에 대해 누구나 단번에 직관적으로 이해할 수 있도록 구구절절한 전문 용어 서술을 완전히 배제하고, 핵심 내용만 딱 요약하여 2~3문장 이내로 아주 간결하게 'explanation' 필드에 한국어로 작성해주세요.
-6. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
-
-응답 형식:
-{
-  "isCorrect": true 또는 false,
-  "reason": "채점 결과 요약 및 오답인 경우 틀린 이유/피드백 (한국어)",
-  "correctAnswer": "모범 답안 코드 또는 개념 텍스트",
-  "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
-}`;
-
-  const text = await callGeminiWithFallback(apiKey, prompt);
-
-  let cleanText = text.trim();
-  if (cleanText.includes('```')) {
-    // Extract JSON between ```json and ```
-    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (match) {
-      cleanText = match[1].trim();
-    } else {
-      cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
-    }
-  }
-
-  const result = JSON.parse(cleanText);
-  return {
-    isCorrect: !!result.isCorrect,
-    reason: result.reason || '',
-    correctAnswer: result.correctAnswer || '',
-    explanation: result.explanation || ''
-  };
-}
+import { gradeWithGemini } from './gemini';
 
 export default function App() {
   const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
@@ -192,7 +78,8 @@ export default function App() {
 
   const handlePasswordSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (adminPassword === "121600") {
+    const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD || "121600";
+    if (adminPassword === correctPassword) {
       setShowPasswordModal(false);
       setCurrentView('admin');
     } else {
@@ -221,18 +108,18 @@ export default function App() {
     initPyodide();
   }, []);
 
-  const fetchProgress = async () => {
+  const fetchProgress = useCallback(async () => {
     if (loggedInUser && loggedInUser !== ADMIN_ID) {
       const p = await getStudentProgress(loggedInUser);
       setStudentProgress(p);
     }
-  };
+  }, [loggedInUser]);
 
   useEffect(() => {
     if (loggedInUser && currentView === 'home') {
       fetchProgress();
     }
-  }, [loggedInUser, currentView]);
+  }, [loggedInUser, currentView, fetchProgress]);
 
   if (!loggedInUser) return <Login onLogin={setLoggedInUser} dynamicTeam={dynamicTeam} />;
 
@@ -240,7 +127,19 @@ export default function App() {
     if (quiz.questions.length === 0) return;
     setSelectedQuiz(quiz);
     setCurrentQuestionIdx(0);
-    setAnswers({});
+    
+    const savedKey = `aim_quiz_answers_${quiz.id}_${loggedInUser}`;
+    const saved = localStorage.getItem(savedKey);
+    if (saved) {
+      try {
+        setAnswers(JSON.parse(saved));
+      } catch (e) {
+        setAnswers({});
+      }
+    } else {
+      setAnswers({});
+    }
+    
     setResults({});
     setShowResults(false);
     setCurrentView('quiz');
@@ -257,12 +156,21 @@ export default function App() {
     setCurrentView('home');
   };
 
+  useEffect(() => {
+    if (selectedQuiz && loggedInUser && Object.keys(answers).length > 0) {
+      localStorage.setItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`, JSON.stringify(answers));
+    }
+  }, [answers, selectedQuiz, loggedInUser]);
+
   const resetQuiz = () => {
     setCurrentQuestionIdx(0);
     setAnswers({});
     setResults({});
     setShowResults(false);
     setExpandedAnswers({});
+    if (selectedQuiz && loggedInUser) {
+      localStorage.removeItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`);
+    }
   };
 
   const gradeQuiz = async () => {
@@ -330,6 +238,7 @@ export default function App() {
     try {
       await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
       await fetchProgress();
+      localStorage.removeItem(`aim_quiz_answers_${selectedQuiz!.id}_${loggedInUser}`);
     } catch (e) { alert("결과 저장 실패"); }
     setIsGrading(false);
     setShowResults(true);
@@ -342,7 +251,9 @@ export default function App() {
     return q.visibleTo.includes(loggedInUser);
   });
   const validQuizzes = visibleQuizzes.filter(q => q.questions.length > 0);
-  const completionRate = validQuizzes.length > 0 ? Math.round((studentProgress.length / validQuizzes.length) * 100) : 0;
+  const uniqueCompletedQuizIds = new Set(studentProgress.map(p => p.quizId));
+  const completedValidCount = validQuizzes.filter(q => uniqueCompletedQuizIds.has(q.id)).length;
+  const completionRate = validQuizzes.length > 0 ? Math.min(100, Math.round((completedValidCount / validQuizzes.length) * 100)) : 0;
 
   // Helper variables for Quiz view
   const questions = selectedQuiz?.questions || [];
@@ -503,6 +414,28 @@ export default function App() {
                   <div style={{fontWeight: 800, fontSize: 16}}>{selectedQuiz.title}</div>
                 </div>
                 <div style={{height: 6, background: 'var(--bg-color)', borderRadius: 3, overflow: 'hidden'}}><div style={{height: '100%', background: 'var(--primary)', width: `${progress}%`, transition: 'width 0.3s'}} /></div>
+                <div style={{display: 'flex', gap: 8, marginTop: 16, overflowX: 'auto', paddingBottom: 8}}>
+                  {questions.map((q, idx) => {
+                    const ans = answers[q.id];
+                    const hasAns = q.type === 'short' ? !!(ans && (ans as string).trim()) : (Array.isArray(ans) && ans.length > 0);
+                    return (
+                      <button
+                        key={q.id}
+                        onClick={() => setCurrentQuestionIdx(idx)}
+                        style={{
+                          width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
+                          border: currentQuestionIdx === idx ? '2px solid var(--primary)' : (hasAns ? '1px solid var(--primary)' : '1px solid var(--border)'),
+                          background: currentQuestionIdx === idx ? 'var(--primary)' : (hasAns ? 'rgba(49, 130, 246, 0.1)' : 'var(--surface)'),
+                          color: currentQuestionIdx === idx ? '#fff' : (hasAns ? 'var(--primary)' : 'var(--text-secondary)'),
+                          fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                          padding: 0
+                        }}
+                      >
+                        {idx + 1}
+                      </button>
+                    )
+                  })}
+                </div>
               </header>
               <main style={{padding: '40px 0'}}>
                 <h2 style={{fontSize: 22, fontWeight: 800, marginBottom: 24}}>{currentQuestion.title}</h2>

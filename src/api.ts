@@ -2,6 +2,8 @@ import { db, isMock } from './firebase';
 import { collection, setDoc, getDocs, doc, query, where, deleteDoc } from 'firebase/firestore';
 import type { Quiz } from './data';
 
+import { ADMIN_ID } from './team';
+
 // In-memory DB for when Firebase is not configured yet
 const MOCK_DB: any = {
   progress: []
@@ -29,7 +31,7 @@ const CACHE_TTL = 1000 * 30; // 30 seconds cache
 
 export async function saveScore(studentId: string, quizId: string, score: number, total: number, detailedResults?: Record<string, any>) {
   if (!studentId || !quizId) return;
-  if (studentId === 'admin') return;
+  if (studentId === ADMIN_ID) return;
   
   // Firestore 호환 데이터로 정제
   const cleanValue = (val: any): any => {

@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
 import { type Student } from './team';
 import { getQuizResults, saveQuiz, deleteQuiz, saveStudent, deleteStudent, type Progress } from './api';
-import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle, Copy, Download } from 'lucide-react';
 
 interface AdminProps {
   onBack: () => void;
@@ -12,109 +12,7 @@ interface AdminProps {
   onRefreshTeam: () => void;
 }
 
-const GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash'
-];
-
-// 이전에 성공한 모델 기억
-let lastSuccessfulModelAdmin: string | null = null;
-
-async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
-  let lastError = null;
-  const timeout = 15000; // 15초 타임아웃
-  
-  // 성공한 모델이 있으면 먼저 시도
-  const modelsToTry = lastSuccessfulModelAdmin 
-    ? [lastSuccessfulModelAdmin, ...GEMINI_MODELS.filter(m => m !== lastSuccessfulModelAdmin)]
-    : GEMINI_MODELS;
-  
-  for (const model of modelsToTry) {
-    try {
-      console.log(`Trying Gemini model in admin mode: ${model}`);
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            responseMimeType: 'application/json'
-          }
-        }),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`API error ${response.status}: ${response.statusText}`);
-      }
-      const json = await response.json();
-      const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new Error('Empty response');
-      }
-      
-      // 성공한 모델 기억
-      lastSuccessfulModelAdmin = model;
-      console.log(`Success with model: ${model}`);
-      return text;
-    } catch (e) {
-      console.warn(`Model ${model} failed in admin preview:`, e);
-      lastError = e;
-    }
-  }
-  throw lastError || new Error('All Gemini models failed');
-}
-
-async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctAnswer: string; explanation: string }> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
-  if (!apiKey) {
-    throw new Error('Gemini API key is not configured');
-  }
-
-  const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 
-다음 질문에 대해 학생들이 참고할 수 있는 가장 완벽하고 이상적인 모범 답안(코드 또는 개념 설명)과 핵심 요약 해설을 제공해줘.
-
-[문제 정보]
-- 질문: ${qTitle}
-- 설명: ${qDesc}
-
-[제공 규칙]
-1. 이 질문에 대한 가장 모범적인 정답/코드(HTML/CSS/JS/Python 등 문제에 맞는 형식)를 'correctAnswer' field에 제공해주세요.
-2. 이 질문의 핵심 개념에 대해 누구나 단번에 직관적으로 이해할 수 있도록 구구절절한 전문 용어 서술을 완전히 배제하고, 핵심 내용만 딱 요약하여 2~3문장 이내로 아주 간결하게 'explanation' field에 한국어로 작성해주세요.
-3. 응답은 반드시 마크다운 백틱 없이 순수 JSON 객체 한 개로만 출력하세요. 다른 잡담이나 설명은 넣지 마세요.
-
-응답 형식:
-{
-  "correctAnswer": "모범 답안 코드 또는 개념 텍스트",
-  "explanation": "해당 문제의 핵심 이론 및 상세 해설 (한국어)"
-}`;
-
-  const text = await callGeminiWithFallback(apiKey, prompt);
-
-  let cleanText = text.trim();
-  if (cleanText.includes('```')) {
-    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (match) cleanText = match[1].trim();
-    else cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
-  }
-
-  const result = JSON.parse(cleanText);
-  return {
-    correctAnswer: result.correctAnswer || '',
-    explanation: result.explanation || ''
-  };
-}
+import { fetchAiPreview, callGeminiWithFallback } from './gemini';
 
 export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, onRefreshTeam }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team'>('results');
@@ -138,7 +36,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     isPublished: true
   });
 
-  const fetchResults = async () => {
+  const fetchResults = useCallback(async () => {
     if (!selectedQuizId) return;
     setLoading(true);
     try {
@@ -146,14 +44,14 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       setResults(res);
     } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [selectedQuizId]);
 
   useEffect(() => {
     if (activeTab === 'results') {
       fetchResults();
       setShowQuizAiPreview(false);
     }
-  }, [selectedQuizId, activeTab]);
+  }, [selectedQuizId, activeTab, fetchResults]);
 
   const loadQuizForEdit = () => {
     const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
@@ -166,15 +64,57 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     }
   };
 
+  const duplicateQuiz = () => {
+    const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
+    if (quizToEdit) {
+      const copy = JSON.parse(JSON.stringify(quizToEdit));
+      copy.id = `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`;
+      copy.title = `${copy.title} (복제본)`;
+      if (copy.isPublished === undefined) copy.isPublished = true;
+      setActiveQuiz(copy);
+      setAiPreviews({});
+      setActiveTab('create');
+    }
+  };
+
   const handleDeleteQuiz = async () => {
     if (!selectedQuizId) return;
     if (!window.confirm("정말로 이 퀴즈를 삭제하시겠습니까?")) return;
-    setLoading(true);
     try {
       await deleteQuiz(selectedQuizId);
+      alert("삭제되었습니다.");
       onRefresh();
-    } catch (e) { console.error(e); }
-    setLoading(false);
+      setSelectedQuizId(dynamicQuizzes[0]?.id || '');
+    } catch (e) {
+      alert("삭제 실패");
+    }
+  };
+
+  const exportToCSV = () => {
+    if (!selectedQuizId || !results || results.length === 0) return;
+    const quiz = dynamicQuizzes.find(q => q.id === selectedQuizId);
+    if (!quiz) return;
+    
+    const headers = ['이름', '학번', '점수', '제출시간', '상세결과'];
+    const rows = results.map(r => {
+      const student = dynamicTeam.find(s => s.id === r.studentId);
+      const name = student ? student.name : r.studentId;
+      const scoreStr = `${r.score} / ${r.total}`;
+      const timeStr = new Date(r.timestamp).toLocaleString();
+      const detailStr = r.detailedResults ? JSON.stringify(r.detailedResults).replace(/"/g, '""') : '';
+      return `"${name}","${r.studentId}","${scoreStr}","${timeStr}","${detailStr}"`;
+    });
+    
+    const csvContent = "\uFEFF" + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${quiz.title}_결과.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleAddStudent = async () => {
@@ -370,6 +310,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 </select>
                 <div style={{display: 'flex', gap: 8}}>
                   <button onClick={loadQuizForEdit} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Edit3 size={18} /> 수정</button>
+                  <button onClick={duplicateQuiz} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Copy size={18} /> 복제</button>
+                  <button onClick={exportToCSV} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Download size={18} /> CSV</button>
                   <button onClick={handleDeleteQuiz} style={{background: 'rgba(231, 76, 60, 0.05)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: '#E74C3C'}}><Trash size={18} /></button>
                   <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}><RefreshCw size={20} className={loading ? 'animate-spin' : ''} /></button>
                 </div>
