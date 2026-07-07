@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
-import { type Student } from './team';
+import { type Student, getStudentName } from './team';
 import { getQuizResults, getAllProgress, saveQuiz, deleteQuiz, saveStudent, deleteStudent, getAnnouncements, saveAnnouncement, deleteAnnouncement, type Progress } from './api';
 import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle, Copy, Download, BarChart2 } from 'lucide-react';
 
@@ -590,8 +590,6 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                     );
                   })}
                 </div>
-                </div>
-
                 <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
                   <h3 style={{fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)'}}>🏆 리더보드 (평균 정답률 순위)</h3>
                   {(() => {
@@ -662,7 +660,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                     <details style={{marginTop: 12, background: 'var(--bg-color)', borderRadius: 6, padding: 8}}>
                                       <summary style={{fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)'}}>오답 상세 보기</summary>
                                       <div style={{marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8}}>
-                                        {Object.entries(s.detailedResults).filter(([k, v]) => !k.startsWith('reason_') && !k.startsWith('ans_') && v === false).map(([k, v]) => {
+                                        {Object.entries(s.detailedResults).filter(([k, v]) => !k.startsWith('reason_') && !k.startsWith('ans_') && v === false).map(([k]) => {
                                           const question = q?.questions.find(qu => qu.id === k);
                                           return (
                                             <div key={k} style={{padding: 8, background: 'rgba(231, 76, 60, 0.05)', borderRadius: 6, border: '1px solid rgba(231, 76, 60, 0.1)'}}>
