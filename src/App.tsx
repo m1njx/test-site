@@ -672,10 +672,25 @@ export default function App() {
                   <button onClick={goHome} style={{background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--text-secondary)'}}><Home size={18} /> 나가기</button>
                   <div style={{fontWeight: 800, fontSize: 16}}>{selectedQuiz.title}</div>
                   {timeLeft !== null ? (
-                    <div style={{display: 'flex', alignItems: 'center', gap: 4, fontWeight: 700, fontSize: 15, color: timeLeft <= 60 ? 'var(--incorrect)' : 'var(--text-secondary)'}}>
+                    <motion.div 
+                      animate={timeLeft <= 120 ? { scale: [1, 1.03, 1], opacity: [1, 0.8, 1] } : {}}
+                      transition={{ repeat: Infinity, duration: 1.5 }}
+                      style={{
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 6, 
+                        fontWeight: 700, 
+                        fontSize: 15, 
+                        color: timeLeft <= 120 ? 'var(--incorrect)' : 'var(--text-secondary)',
+                        background: timeLeft <= 120 ? 'rgba(231, 76, 60, 0.08)' : 'transparent',
+                        padding: timeLeft <= 120 ? '4px 10px' : '0',
+                        borderRadius: 8,
+                        transition: 'all 0.3s ease'
+                      }}
+                    >
                       <Clock size={16} />
-                      {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
-                    </div>
+                      <span>{Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}</span>
+                    </motion.div>
                   ) : <div style={{width: 80}}></div>}
                 </div>
                 <div style={{height: 6, background: 'var(--bg-color)', borderRadius: 3, overflow: 'hidden'}}><div style={{height: '100%', background: 'var(--primary)', width: `${progress}%`, transition: 'width 0.3s'}} /></div>

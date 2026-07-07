@@ -78,6 +78,43 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     }
   }, [activeTab]);
 
+  const getTopIncorrectQuestions = () => {
+    const questionStats: Record<string, { quizTitle: string, questionTitle: string, incorrect: number, total: number }> = {};
+
+    allStats.forEach(stat => {
+      const quiz = dynamicQuizzes.find(q => q.id === stat.quizId);
+      if (!quiz) return;
+
+      quiz.questions.forEach(q => {
+        const detailedResults = stat.detailedResults || {};
+        if (detailedResults[q.id] !== undefined) {
+          if (!questionStats[q.id]) {
+            questionStats[q.id] = {
+              quizTitle: quiz.title,
+              questionTitle: q.title,
+              incorrect: 0,
+              total: 0
+            };
+          }
+          questionStats[q.id].total += 1;
+          if (detailedResults[q.id] === false) {
+            questionStats[q.id].incorrect += 1;
+          }
+        }
+      });
+    });
+
+    return Object.entries(questionStats)
+      .map(([id, stats]) => ({
+        id,
+        ...stats,
+        rate: Math.round(stats.incorrect / stats.total * 100)
+      }))
+      .filter(item => item.total > 0)
+      .sort((a, b) => b.rate - a.rate || b.total - a.total)
+      .slice(0, 3);
+  };
+
   const loadQuizForEdit = () => {
     const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
     if (quizToEdit) {
@@ -555,6 +592,37 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                       {Math.round(allStats.reduce((acc, curr) => acc + (curr.score / curr.total), 0) / allStats.length * 100)}%
                     </div>
                   </div>
+                </div>
+
+                <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
+                  <h3 style={{fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6}}>
+                    ❌ 가장 오답률이 높은 문제 TOP 3
+                  </h3>
+                  {(() => {
+                    const topIncorrect = getTopIncorrectQuestions();
+                    if (topIncorrect.length === 0) {
+                      return <div style={{fontSize: 14, color: 'var(--text-tertiary)', textAlign: 'center', padding: '16px 0'}}>아직 집계할 수 있는 오답 데이터가 부족합니다.</div>;
+                    }
+                    return (
+                      <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+                        {topIncorrect.map((item) => (
+                          <div key={item.id} style={{padding: 16, background: 'var(--bg-color)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16}}>
+                            <div style={{flex: 1}}>
+                              <div style={{fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)', marginBottom: 4}}>[{item.quizTitle}]</div>
+                              <div style={{fontSize: 14, fontWeight: 700, color: 'var(--text-primary)'}}>{item.questionTitle}</div>
+                              <div style={{fontSize: 12, color: 'var(--text-secondary)', marginTop: 6}}>
+                                총 {item.total}회 응시 중 {item.incorrect}회 오답
+                              </div>
+                            </div>
+                            <div style={{textAlign: 'right'}}>
+                              <div style={{fontSize: 18, fontWeight: 800, color: '#E74C3C'}}>{item.rate}%</div>
+                              <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', marginTop: 2}}>오답률</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
                 
                 <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
