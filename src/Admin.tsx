@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
 import { type Student } from './team';
-import { getQuizResults, getAllProgress, saveQuiz, deleteQuiz, saveStudent, deleteStudent, type Progress } from './api';
+import { getQuizResults, getAllProgress, saveQuiz, deleteQuiz, saveStudent, deleteStudent, getAnnouncements, saveAnnouncement, deleteAnnouncement, type Progress } from './api';
 import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle, Copy, Download, BarChart2 } from 'lucide-react';
 
 interface AdminProps {
@@ -15,8 +15,10 @@ interface AdminProps {
 import { fetchAiPreview, callGeminiWithFallback } from './gemini';
 
 export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, onRefreshTeam }: AdminProps) {
-  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team' | 'stats'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team' | 'stats' | 'announcements'>('results');
   const [allStats, setAllStats] = useState<Progress[]>([]);
+  const [announcements, setAnnouncements] = useState<{id: string, text: string, date: number}[]>([]);
+  const [newAnnouncement, setNewAnnouncement] = useState('');
   const [selectedQuizId, setSelectedQuizId] = useState(dynamicQuizzes[0]?.id || '');
   const [results, setResults] = useState<Progress[]>([]);
   const [loading, setLoading] = useState(false);
@@ -63,6 +65,16 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
         setLoading(false);
       };
       fetchStats();
+    }
+    
+    if (activeTab === 'announcements') {
+      const fetchAnnouncements = async () => {
+        setLoading(true);
+        const data = await getAnnouncements();
+        setAnnouncements(data);
+        setLoading(false);
+      };
+      fetchAnnouncements();
     }
   }, [activeTab]);
 
@@ -308,6 +320,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
           <button onClick={() => setActiveTab('stats')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'stats' ? 'var(--surface)' : 'transparent', color: activeTab === 'stats' ? 'var(--primary)' : 'var(--text-secondary)'}}>통계</button>
           <button onClick={() => { setActiveTab('create'); }} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'create' ? 'var(--surface)' : 'transparent', color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)'}}>퀴즈 생성</button>
           <button onClick={() => setActiveTab('team')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'team' ? 'var(--surface)' : 'transparent', color: activeTab === 'team' ? 'var(--primary)' : 'var(--text-secondary)'}}>팀원 관리</button>
+          <button onClick={() => setActiveTab('announcements')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'announcements' ? 'var(--surface)' : 'transparent', color: activeTab === 'announcements' ? 'var(--primary)' : 'var(--text-secondary)'}}>공지</button>
         </div>
       </header>
 
@@ -556,12 +569,120 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                           <span>{quiz.title}</span>
                           <span>{avgRate}% ({quizStats.length}명 참여)</span>
                         </div>
-                        <div style={{height: 8, background: 'var(--bg-color)', borderRadius: 4, overflow: 'hidden'}}>
+                        <div style={{height: 8, background: 'var(--bg-color)', borderRadius: 4, overflow: 'hidden', marginBottom: 8}}>
                           <div style={{height: '100%', background: 'var(--primary)', width: `${avgRate}%`}}></div>
                         </div>
+                        <details style={{fontSize: 12, color: 'var(--text-secondary)'}}>
+                          <summary style={{cursor: 'pointer', outline: 'none'}}>미응시자 확인</summary>
+                          <div style={{padding: 8, background: 'rgba(231, 76, 60, 0.05)', borderRadius: 8, marginTop: 4, color: '#E74C3C', fontWeight: 600}}>
+                            {(() => {
+                              const targetStudents = quiz.visibleTo && quiz.visibleTo.length > 0 
+                                ? dynamicTeam.filter(s => quiz.visibleTo!.includes(s.id))
+                                : dynamicTeam;
+                              const submittedIds = new Set(quizStats.map(s => s.studentId));
+                              const unsubmitted = targetStudents.filter(s => !submittedIds.has(s.id));
+                              if (unsubmitted.length === 0) return '모두 응시했습니다 🎉';
+                              return `미응시 (${unsubmitted.length}명): ${unsubmitted.map(s => s.name).join(', ')}`;
+                            })()}
+                          </div>
+                        </details>
                       </div>
                     );
                   })}
+                </div>
+                </div>
+
+                <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
+                  <h3 style={{fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)'}}>🏆 리더보드 (평균 정답률 순위)</h3>
+                  {(() => {
+                    const studentAverages = new Map<string, {name: string, totalScore: number, totalQuestions: number}>();
+                    allStats.forEach(s => {
+                      const prev = studentAverages.get(s.studentId) || {name: getStudentName(s.studentId, dynamicTeam), totalScore: 0, totalQuestions: 0};
+                      studentAverages.set(s.studentId, {
+                        name: prev.name,
+                        totalScore: prev.totalScore + (s.bestScore ?? s.score),
+                        totalQuestions: prev.totalQuestions + s.total
+                      });
+                    });
+                    
+                    const rankings = Array.from(studentAverages.values())
+                      .map(s => ({...s, rate: Math.round(s.totalScore / s.totalQuestions * 100)}))
+                      .sort((a, b) => b.rate - a.rate);
+                      
+                    return (
+                      <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+                        {rankings.map((r, i) => (
+                          <div key={i} style={{display: 'flex', alignItems: 'center', gap: 16, padding: 16, background: 'var(--bg-color)', borderRadius: 12}}>
+                            <div style={{fontSize: 20, fontWeight: 800, width: 32, textAlign: 'center'}}>
+                              {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`}
+                            </div>
+                            <div style={{flex: 1}}>
+                              <div style={{fontWeight: 700, fontSize: 14, marginBottom: 6}}>{r.name}</div>
+                              <div style={{height: 6, background: 'var(--surface)', borderRadius: 3, overflow: 'hidden'}}>
+                                <div style={{height: '100%', background: r.rate >= 80 ? '#27AE60' : (r.rate >= 50 ? 'var(--primary)' : '#E74C3C'), width: `${r.rate}%`}} />
+                              </div>
+                            </div>
+                            <div style={{fontWeight: 800, fontSize: 16, color: 'var(--primary)'}}>{r.rate}%</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
+                  <h3 style={{fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)'}}>👤 학생별 상세 성적 조회</h3>
+                  <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+                    {dynamicTeam.map(student => {
+                      const studentStats = allStats.filter(s => s.studentId === student.id).sort((a, b) => b.timestamp - a.timestamp);
+                      if (studentStats.length === 0) return null;
+                      
+                      return (
+                        <details key={student.id} style={{background: 'var(--bg-color)', borderRadius: 12, padding: '16px 20px'}}>
+                          <summary style={{fontWeight: 700, cursor: 'pointer', outline: 'none', display: 'flex', justifyContent: 'space-between'}}>
+                            <span>{student.name} ({student.id})</span>
+                            <span style={{color: 'var(--primary)'}}>응시 기록 {studentStats.length}건</span>
+                          </summary>
+                          <div style={{marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12}}>
+                            {studentStats.map(s => {
+                              const q = dynamicQuizzes.find(quiz => quiz.id === s.quizId);
+                              const rate = Math.round((s.bestScore ?? s.score) / s.total * 100);
+                              return (
+                                <div key={`${s.quizId}_${s.timestamp}`} style={{background: 'var(--surface)', padding: 16, borderRadius: 8, border: '1px solid var(--border)'}}>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+                                    <span style={{fontWeight: 700, fontSize: 13}}>{q?.title || s.quizId}</span>
+                                    <span style={{fontWeight: 800, color: rate >= 80 ? '#27AE60' : 'var(--primary)', fontSize: 13}}>{rate}% ({s.bestScore ?? s.score}/{s.total})</span>
+                                  </div>
+                                  <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-tertiary)'}}>
+                                    <span>응시일: {new Date(s.timestamp).toLocaleString()}</span>
+                                    <span>응시 횟수: {s.attempts || 1}회</span>
+                                  </div>
+                                  
+                                  {s.detailedResults && (
+                                    <details style={{marginTop: 12, background: 'var(--bg-color)', borderRadius: 6, padding: 8}}>
+                                      <summary style={{fontSize: 12, fontWeight: 600, cursor: 'pointer', color: 'var(--text-secondary)'}}>오답 상세 보기</summary>
+                                      <div style={{marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8}}>
+                                        {Object.entries(s.detailedResults).filter(([k, v]) => !k.startsWith('reason_') && !k.startsWith('ans_') && v === false).map(([k, v]) => {
+                                          const question = q?.questions.find(qu => qu.id === k);
+                                          return (
+                                            <div key={k} style={{padding: 8, background: 'rgba(231, 76, 60, 0.05)', borderRadius: 6, border: '1px solid rgba(231, 76, 60, 0.1)'}}>
+                                              <div style={{fontSize: 12, fontWeight: 700, marginBottom: 4}}>{question?.title || k}</div>
+                                              <div style={{fontSize: 12, color: 'var(--text-secondary)'}}>제출답안: {Array.isArray(s.detailedResults![`ans_${k}`]) ? s.detailedResults![`ans_${k}`].join(', ') : s.detailedResults![`ans_${k}`] || '(없음)'}</div>
+                                              {s.detailedResults![`reason_${k}`] && <div style={{fontSize: 11, color: '#E74C3C', marginTop: 4}}>{s.detailedResults![`reason_${k}`]}</div>}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </details>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
@@ -597,12 +718,25 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               </div>
               <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                 <input type="text" value={activeQuiz.title} onChange={(e) => setActiveQuiz({...activeQuiz, title: e.target.value})} placeholder="퀴즈 제목" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
-                <input type="date" value={activeQuiz.date} onChange={(e) => setActiveQuiz({...activeQuiz, date: e.target.value, id: `q-${e.target.value}`})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
+                <div style={{display: 'flex', gap: 16}}>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)'}}>날짜 (ID)</label>
+                    <input type="date" value={activeQuiz.date} onChange={(e) => setActiveQuiz({...activeQuiz, date: e.target.value, id: `q-${e.target.value}`})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
+                  </div>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)'}}>마감 기한 (선택)</label>
+                    <input type="date" value={activeQuiz.deadline || ''} onChange={(e) => setActiveQuiz({...activeQuiz, deadline: e.target.value || undefined})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
+                  </div>
+                </div>
                 <textarea value={activeQuiz.description} onChange={(e) => setActiveQuiz({...activeQuiz, description: e.target.value})} placeholder="상세 설명" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, minHeight: 80}}/>
                 <div style={{display: 'flex', gap: 16, alignItems: 'center'}}>
                   <div style={{flex: 1}}>
                     <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)'}}>제한 시간 (분)</label>
                     <input type="number" min="0" value={activeQuiz.timeLimit || ''} onChange={(e) => setActiveQuiz({...activeQuiz, timeLimit: e.target.value ? parseInt(e.target.value) : undefined})} placeholder="제한 없음" style={{width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 14}}/>
+                  </div>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)'}}>최대 응시 가능 횟수</label>
+                    <input type="number" min="1" value={activeQuiz.maxAttempts || ''} onChange={(e) => setActiveQuiz({...activeQuiz, maxAttempts: e.target.value ? parseInt(e.target.value) : undefined})} placeholder="무제한" style={{width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 14}}/>
                   </div>
                   <div style={{flex: 1, display: 'flex', alignItems: 'center', height: '100%', paddingTop: 24}}>
                     <label style={{display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600}}>
@@ -677,7 +811,22 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
             {activeQuiz.questions.map((q, idx) => (
               <div key={q.id} style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', position: 'relative', marginBottom: 20}}>
                 <button onClick={() => setActiveQuiz(p => ({ ...p, questions: p.questions.filter(qu => qu.id !== q.id) }))} style={{position: 'absolute', top: 20, right: 20, background: 'rgba(231, 76, 60, 0.1)', border: 'none', borderRadius: 8, width: 32, height: 32, color: '#E74C3C'}}><Trash2 size={16} /></button>
-                <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20}}><span style={{background: 'var(--primary)', color: 'white', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800}}>{idx + 1}</span><span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>{q.type === 'short' ? '주관식' : '객관식'}</span></div>
+                <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20}}>
+                  <span style={{background: 'var(--primary)', color: 'white', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800}}>{idx + 1}</span>
+                  <span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>{q.type === 'short' ? '주관식' : '객관식'}</span>
+                  <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8}}>
+                    <label style={{fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)'}}>난이도</label>
+                    <select 
+                      value={q.level || 1} 
+                      onChange={(e) => updateQuestion(q.id, {level: parseInt(e.target.value)})}
+                      style={{padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-color)', fontSize: 13, outline: 'none'}}
+                    >
+                      <option value={1}>🟢 기초 (Level 1)</option>
+                      <option value={2}>🟡 보통 (Level 2)</option>
+                      <option value={3}>🔴 심화 (Level 3)</option>
+                    </select>
+                  </div>
+                </div>
                 <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                   <input type="text" placeholder="질문" value={q.title} onChange={(e) => updateQuestion(q.id, {title: e.target.value})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}/>
                   {q.type !== 'short' && (
@@ -840,6 +989,64 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   <button onClick={() => handleDeleteStudent(student.id)} style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer'}}><Trash2 size={18} /></button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'announcements' && (
+          <div style={{maxWidth: 600, margin: '0 auto'}}>
+            <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
+              <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}>📢 새 공지 등록</h2>
+              <textarea value={newAnnouncement} onChange={(e) => setNewAnnouncement(e.target.value)} placeholder="홈 화면 상단에 표시될 공지 내용을 입력하세요" style={{width: '100%', padding: '16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, minHeight: 120, background: 'var(--bg-color)', outline: 'none', resize: 'vertical', marginBottom: 16}} />
+              <div style={{display: 'flex', justifyContent: 'flex-end'}}>
+                <button 
+                  disabled={loading || !newAnnouncement.trim()} 
+                  onClick={async () => {
+                    setLoading(true);
+                    await saveAnnouncement(newAnnouncement);
+                    setNewAnnouncement('');
+                    const data = await getAnnouncements();
+                    setAnnouncements(data);
+                    setLoading(false);
+                  }} 
+                  className="btn btn-primary"
+                  style={{minWidth: 120}}
+                >
+                  {loading ? <RefreshCw className="animate-spin" size={18} /> : '등록하기'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)'}}>
+              <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}>📢 등록된 공지 ({announcements.length})</h2>
+              {announcements.length === 0 ? (
+                <div style={{textAlign: 'center', color: 'var(--text-tertiary)', padding: 20}}>등록된 공지가 없습니다.</div>
+              ) : (
+                <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
+                  {announcements.map(ann => (
+                    <div key={ann.id} style={{padding: 16, background: 'var(--bg-color)', borderRadius: 12}}>
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8}}>
+                        <div style={{fontSize: 12, color: 'var(--text-tertiary)'}}>{new Date(ann.date).toLocaleString()}</div>
+                        <button 
+                          onClick={async () => {
+                            if (window.confirm('정말 삭제하시겠습니까?')) {
+                              setLoading(true);
+                              await deleteAnnouncement(ann.id);
+                              const data = await getAnnouncements();
+                              setAnnouncements(data);
+                              setLoading(false);
+                            }
+                          }} 
+                          style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer', padding: 4}}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                      <div style={{whiteSpace: 'pre-wrap', lineHeight: 1.5, fontSize: 14}}>{ann.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

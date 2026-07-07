@@ -1,5 +1,5 @@
 import { db, isMock } from './firebase';
-import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy } from 'firebase/firestore';
+import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy, getDoc } from 'firebase/firestore';
 import type { Quiz } from './data';
 
 import { ADMIN_ID } from './team';
@@ -16,6 +16,8 @@ export interface Progress {
   total: number;
   timestamp: number;
   detailedResults?: Record<string, any>;
+  bestScore?: number;
+  attempts?: number;
 }
 
 // Cache for Firebase results to improve performance
@@ -66,12 +68,26 @@ export async function saveScore(studentId: string, quizId: string, score: number
   try {
     if (isMock) {
       const idx = MOCK_DB.progress.findIndex((p: any) => p.studentId === studentId && p.quizId === quizId);
+      const existing = idx >= 0 ? MOCK_DB.progress[idx] : null;
+      data.attempts = existing ? (existing.attempts || 1) + 1 : 1;
+      data.bestScore = existing ? Math.max(existing.bestScore || existing.score || 0, score) : score;
+      
       if (idx >= 0) MOCK_DB.progress[idx] = data;
       else MOCK_DB.progress.push(data);
       return;
     }
     
     const docRef = doc(db, 'progress', `${studentId}_${quizId}`);
+    const existingSnap = await getDoc(docRef);
+    if (existingSnap.exists()) {
+      const existing = existingSnap.data() as Progress;
+      data.attempts = (existing.attempts || 1) + 1;
+      data.bestScore = Math.max(existing.bestScore || existing.score || 0, score);
+    } else {
+      data.attempts = 1;
+      data.bestScore = score;
+    }
+    
     await setDoc(docRef, data);
 
     // Invalidate/Update cache
@@ -252,4 +268,27 @@ export async function deleteStudent(id: string) {
     console.error("Error deleting student:", error);
     throw error;
   }
+}
+
+export async function getAnnouncements(): Promise<{id: string, text: string, date: number}[]> {
+  try {
+    if (isMock) return [];
+    const q = query(collection(db, "announcements"), orderBy("date", "desc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+export async function saveAnnouncement(text: string) {
+  if (isMock) return;
+  const newRef = doc(collection(db, 'announcements'));
+  await setDoc(newRef, { text, date: Date.now() });
+}
+
+export async function deleteAnnouncement(id: string) {
+  if (isMock) return;
+  await deleteDoc(doc(db, 'announcements', id));
 }

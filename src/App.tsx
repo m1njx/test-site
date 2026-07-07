@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock } from 'lucide-react';
+import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, getStudentName, type Student } from './team';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, type Progress } from './api';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import './index.css';
@@ -15,6 +15,44 @@ declare global {
 }
 
 import { gradeWithGemini } from './gemini';
+
+const CodeEditor = ({ value, onChange, placeholder }: { value: string, onChange: (val: string) => void, placeholder?: string }) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const target = e.target as HTMLTextAreaElement;
+      const start = target.selectionStart;
+      const end = target.selectionEnd;
+      onChange(value.substring(0, start) + '  ' + value.substring(end));
+      setTimeout(() => {
+        target.selectionStart = target.selectionEnd = start + 2;
+      }, 0);
+    }
+  };
+
+  const lineCount = (value.match(/\n/g) || []).length + 1;
+  const lines = Array.from({ length: Math.max(10, lineCount) }, (_, i) => i + 1);
+
+  return (
+    <div style={{ display: 'flex', background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', overflow: 'hidden' }}>
+      <div style={{ padding: '20px 10px', background: 'var(--bg-color)', borderRight: '1px solid var(--border)', color: 'var(--text-tertiary)', textAlign: 'right', fontFamily: 'monospace', fontSize: 16, userSelect: 'none', minHeight: 200, lineHeight: '1.5' }}>
+        {lines.map(n => <div key={n} style={{ lineHeight: '1.5' }}>{n}</div>)}
+      </div>
+      <textarea
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        spellCheck={false}
+        style={{
+          flex: 1, padding: 20, border: 'none', fontSize: 16, fontFamily: 'monospace',
+          background: 'transparent', outline: 'none', resize: 'vertical', minHeight: 200, lineHeight: '1.5', whiteSpace: 'pre'
+        }}
+      />
+    </div>
+  );
+};
 
 export default function App() {
   const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
@@ -49,6 +87,10 @@ export default function App() {
   });
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [shouldAutoSubmit, setShouldAutoSubmit] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showOnlyWrong, setShowOnlyWrong] = useState(false);
+  const [showWrongNotes, setShowWrongNotes] = useState(false);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -106,9 +148,17 @@ export default function App() {
     });
   };
 
+  const [announcements, setAnnouncements] = useState<{id: string, text: string, date: number}[]>([]);
+
+  const loadAnnouncements = async () => {
+    const data = await getAnnouncements();
+    setAnnouncements(data);
+  };
+
   useEffect(() => {
     loadQuizzes();
     loadTeam();
+    loadAnnouncements();
   }, []);
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -355,30 +405,153 @@ export default function App() {
               <div style={{height: 12, background: 'var(--bg-color)', borderRadius: 6, overflow: 'hidden'}}>
                 <div style={{height: '100%', background: 'var(--primary)', width: `${completionRate}%`, transition: 'width 1s ease-out'}} />
               </div>
+              
+              <div style={{marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16}}>
+                <button 
+                  onClick={() => setShowHistory(!showHistory)}
+                  style={{width: '100%', background: 'transparent', border: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)', padding: '8px 0'}}
+                >
+                  내 성적 히스토리 보기 {showHistory ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+                <AnimatePresence>
+                  {showHistory && (
+                    <motion.div initial={{height: 0, opacity: 0}} animate={{height: 'auto', opacity: 1}} exit={{height: 0, opacity: 0}} style={{overflow: 'hidden'}}>
+                      <div style={{marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12}}>
+                        {studentProgress.length === 0 ? (
+                          <div style={{textAlign: 'center', padding: 20, color: 'var(--text-tertiary)', fontSize: 14}}>아직 응시한 퀴즈가 없습니다.</div>
+                        ) : (
+                          studentProgress.sort((a, b) => b.timestamp - a.timestamp).map(p => {
+                            const q = dynamicQuizzes.find(quiz => quiz.id === p.quizId);
+                            if (!q) return null;
+                            const rate = Math.round((p.bestScore ?? p.score) / p.total * 100);
+                            return (
+                              <div key={p.quizId} style={{padding: 16, background: 'var(--bg-color)', borderRadius: 12}}>
+                                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
+                                  <span style={{fontWeight: 700, fontSize: 14}}>{q.title}</span>
+                                  <span style={{fontWeight: 800, color: 'var(--primary)', fontSize: 14}}>{rate}% ({p.bestScore ?? p.score}/{p.total})</span>
+                                </div>
+                                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8}}>
+                                  <span>응시일: {new Date(p.timestamp).toLocaleDateString()}</span>
+                                  <span>응시 횟수: {p.attempts || 1}회</span>
+                                </div>
+                                <div style={{height: 6, background: 'var(--surface)', borderRadius: 3, overflow: 'hidden'}}>
+                                  <div style={{height: '100%', background: rate >= 80 ? '#27AE60' : (rate >= 50 ? 'var(--primary)' : '#E74C3C'), width: `${rate}%`}} />
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div style={{marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 16}}>
+                <button 
+                  onClick={() => setShowWrongNotes(!showWrongNotes)}
+                  style={{width: '100%', background: 'transparent', border: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)', padding: '8px 0'}}
+                >
+                  📝 나의 오답 노트 모아보기 {showWrongNotes ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+                <AnimatePresence>
+                  {showWrongNotes && (
+                    <motion.div initial={{height: 0, opacity: 0}} animate={{height: 'auto', opacity: 1}} exit={{height: 0, opacity: 0}} style={{overflow: 'hidden'}}>
+                      <div style={{marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16}}>
+                        {(() => {
+                          const wrongItems: any[] = [];
+                          studentProgress.forEach(p => {
+                            if (!p.detailedResults) return;
+                            const q = dynamicQuizzes.find(quiz => quiz.id === p.quizId);
+                            if (!q) return;
+                            
+                            q.questions.forEach(question => {
+                              if (p.detailedResults![question.id] === false) {
+                                wrongItems.push({
+                                  quizTitle: q.title,
+                                  questionTitle: question.title,
+                                  userAns: p.detailedResults![`ans_${question.id}`],
+                                  aiFeedback: p.detailedResults![`reason_${question.id}`]
+                                });
+                              }
+                            });
+                          });
+
+                          if (wrongItems.length === 0) {
+                            return <div style={{textAlign: 'center', padding: 20, color: 'var(--text-tertiary)', fontSize: 14}}>틀린 문제가 없습니다. 훌륭해요! 🎉</div>;
+                          }
+
+                          return wrongItems.map((item, i) => (
+                            <div key={i} style={{padding: 16, background: 'rgba(231, 76, 60, 0.05)', border: '1px solid rgba(231, 76, 60, 0.2)', borderRadius: 12}}>
+                              <div style={{fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4}}>{item.quizTitle}</div>
+                              <div style={{fontSize: 14, fontWeight: 700, marginBottom: 12}}>{item.questionTitle}</div>
+                              <div style={{fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8, padding: 8, background: 'var(--bg-color)', borderRadius: 8}}>
+                                <strong>나의 답변:</strong> {Array.isArray(item.userAns) ? item.userAns.join(', ') : item.userAns || '(없음)'}
+                              </div>
+                              {item.aiFeedback && (
+                                <div style={{fontSize: 13, color: '#E74C3C', fontWeight: 600, padding: 8, background: 'rgba(231, 76, 60, 0.1)', borderRadius: 8}}>
+                                  <strong>AI 분석:</strong> {item.aiFeedback}
+                                </div>
+                              )}
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
           )}
 
           <h1 className="home-title">일일 퀴즈 점검</h1>
           <p className="home-subtitle">날짜별로 할당된 문제를 풀고 실력을 점검하세요.</p>
+          
+          {announcements.length > 0 && (
+            <div style={{background: 'linear-gradient(135deg, rgba(49, 130, 246, 0.1), rgba(49, 130, 246, 0.05))', border: '1px solid rgba(49, 130, 246, 0.2)', padding: '16px 20px', borderRadius: 16, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12}}>
+              <span style={{fontSize: 20}}>📢</span>
+              <div style={{flex: 1}}>
+                <div style={{fontSize: 14, fontWeight: 600, color: 'var(--primary)'}}>공지사항</div>
+                <div style={{fontSize: 15, color: 'var(--text-primary)', marginTop: 4, lineHeight: 1.5, whiteSpace: 'pre-wrap'}}>{announcements[0].text}</div>
+              </div>
+            </div>
+          )}
+
           <div className="quiz-list">
             {visibleQuizzes.map((q) => {
               const p = studentProgress.find(p => p.quizId === q.id);
+              const attempts = p?.attempts || (p ? 1 : 0);
+              const isExhausted = q.maxAttempts ? attempts >= q.maxAttempts : false;
               const isCompleted = !!p;
-              const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID);
+              
+              const isPastDeadline = q.deadline ? new Date(`${q.deadline}T23:59:59`).getTime() < Date.now() : false;
+              const isNearDeadline = q.deadline && !isPastDeadline && !isCompleted ? new Date(`${q.deadline}T23:59:59`).getTime() - Date.now() < 24 * 60 * 60 * 1000 : false;
+              
+              const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID) || (isExhausted && loggedInUser !== ADMIN_ID) || (isPastDeadline && loggedInUser !== ADMIN_ID);
               return (
                 <div key={q.id} className={`quiz-card ${isLocked ? 'disabled' : ''}`} onClick={() => !isLocked && startQuiz(q)} style={isCompleted ? {borderColor: 'rgba(39, 174, 96, 0.4)'} : {}}>
                   <div className="quiz-info">
                     <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? '#27AE60' : 'var(--primary)')}}>
-                      <Calendar size={12} style={{display: 'inline', marginRight: 4}}/> {q.date} {isCompleted && '✓ 완료'} {q.isPublished === false && '(비공개)'}
+                      <Calendar size={12} style={{display: 'inline', marginRight: 4}}/> {q.date} {isCompleted && '✓ 완료'} {q.isPublished === false && '(비공개)'} {isExhausted && '(횟수 초과)'} {isPastDeadline && '(마감됨)'}
                       {loggedInUser === ADMIN_ID && q.visibleTo && q.visibleTo.length > 0 && (
                         <span style={{marginLeft: 8, padding: '2px 6px', background: 'rgba(49, 130, 246, 0.1)', color: 'var(--primary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
                           대상: {q.visibleTo.length}명
                         </span>
                       )}
+                      {q.deadline && !isPastDeadline && (
+                        <span style={{marginLeft: 8, padding: '2px 6px', background: isNearDeadline ? 'rgba(231, 76, 60, 0.1)' : 'rgba(149, 165, 166, 0.1)', color: isNearDeadline ? '#E74C3C' : 'var(--text-secondary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
+                          마감: {q.deadline} {isNearDeadline && '⚠️ 임박'}
+                        </span>
+                      )}
                     </div>
                     <h3 className="quiz-name">{q.title}</h3>
                     <p className="quiz-desc">{q.description}</p>
-                    {isCompleted && <p style={{fontSize: 12, fontWeight: 700, color: '#27AE60', marginTop: 8}}>내 점수: {p.score} / {p.total}</p>}
+                    {isCompleted && (
+                      <div style={{marginTop: 8, display: 'flex', gap: 12}}>
+                        <p style={{fontSize: 12, fontWeight: 700, color: '#27AE60'}}>내 최고 점수: {p.bestScore ?? p.score} / {p.total}</p>
+                        <p style={{fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)'}}>응시 횟수: {attempts} {q.maxAttempts ? `/ ${q.maxAttempts}` : ''}</p>
+                      </div>
+                    )}
                   </div>
                   <div className="quiz-action" style={{color: isCompleted ? '#27AE60' : undefined}}><ArrowRight size={20} /></div>
                 </div>
@@ -395,14 +568,26 @@ export default function App() {
               <div className="result-header" style={{textAlign: 'center', marginBottom: 40}}>
                 <h1 style={{fontSize: 28, fontWeight: 800, marginBottom: 16}}>평가 결과</h1>
                 <div style={{fontSize: 48, fontWeight: 900, color: 'var(--primary)'}}>{questions.reduce((s, q) => (results[q.id] ? s + 1 : s), 0)} <span style={{fontSize: 20, color: 'var(--text-tertiary)'}}>/ {totalQuestions}</span></div>
+                <button 
+                  onClick={() => setShowOnlyWrong(!showOnlyWrong)} 
+                  className={`btn ${showOnlyWrong ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{marginTop: 16, padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700}}
+                >
+                  {showOnlyWrong ? '전체 보기' : '오답만 보기'}
+                </button>
               </div>
               <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
-                {questions.map((q, idx) => (
+                {questions.filter(q => showOnlyWrong ? !results[q.id] : true).map((q, idx) => (
                   <div key={q.id} style={{padding: 20, background: 'var(--surface)', borderRadius: 16, border: results[q.id] ? '1px solid #27AE60' : '1px solid #E74C3C'}}>
                     <div style={{display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12}}>
                       <span style={{background: results[q.id] ? '#27AE60' : '#E74C3C', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx+1}</span>
                       <strong style={{fontSize: 16}}>{q.title}</strong>
-                      {results[q.id] ? <CheckCircle2 color="#27AE60" size={20} /> : <AlertCircle color="#E74C3C" size={20} />}
+                      {q.level === 2 && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(241, 196, 15, 0.1)', color: '#F39C12', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
+                      {q.level === 3 && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
+                      {(!q.level || q.level === 1) && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(39, 174, 96, 0.1)', color: '#27AE60', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
+                      <div style={{marginLeft: 'auto'}}>
+                        {results[q.id] ? <CheckCircle2 color="#27AE60" size={20} /> : <AlertCircle color="#E74C3C" size={20} />}
+                      </div>
                     </div>
                     <div style={{fontSize: 14, color: 'var(--text-secondary)', padding: 12, background: 'var(--bg-color)', borderRadius: 12}}>
                       <div style={{marginBottom: 8}}><strong style={{color: results[q.id] ? '#27AE60' : '#E74C3C'}}>내 답변:</strong> {Array.isArray(answers[q.id]) ? (answers[q.id] as string[]).join(', ') : (answers[q.id] || '(없음)')}</div>
@@ -505,9 +690,18 @@ export default function App() {
                 </div>
               </header>
               <main style={{padding: '40px 0'}}>
-                <h2 style={{fontSize: 22, fontWeight: 800, marginBottom: 24}}>{currentQuestion.title}</h2>
+                <h2 style={{fontSize: 22, fontWeight: 800, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12}}>
+                  {currentQuestion.title}
+                  {currentQuestion.level === 2 && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(241, 196, 15, 0.1)', color: '#F39C12', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
+                  {currentQuestion.level === 3 && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
+                  {(!currentQuestion.level || currentQuestion.level === 1) && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(39, 174, 96, 0.1)', color: '#27AE60', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
+                </h2>
                 {currentQuestion.type === 'short' ? (
-                  <textarea autoFocus value={(currentAnswer as string) || ''} onChange={(e) => setAnswers({...answers, [currentQuestion.id]: e.target.value})} placeholder="코드를 작성하세요..." style={{width: '100%', minHeight: 200, padding: 20, borderRadius: 20, border: '1px solid var(--border)', fontSize: 16, fontFamily: 'monospace', background: 'var(--surface)'}} />
+                  <CodeEditor
+                    value={(currentAnswer as string) || ''}
+                    onChange={(val) => setAnswers({...answers, [currentQuestion.id]: val})}
+                    placeholder="코드를 작성하세요..."
+                  />
                 ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
                     {currentQuestion.options?.map((opt, idx) => (
@@ -521,12 +715,44 @@ export default function App() {
               </main>
               <footer style={{display: 'flex', justifyContent: 'space-between', marginTop: 40}}>
                 <button onClick={() => setCurrentQuestionIdx(v => v - 1)} disabled={currentQuestionIdx === 0} className="btn btn-secondary">이전</button>
-                <button onClick={() => currentQuestionIdx === totalQuestions - 1 ? gradeQuiz() : setCurrentQuestionIdx(v => v + 1)} disabled={!isAnswered || isGrading} className="btn btn-primary" style={{minWidth: 120}}>{isGrading ? <Loader2 className="animate-spin" /> : (currentQuestionIdx === totalQuestions - 1 ? '제출하기' : '다음')}</button>
+                <button onClick={() => currentQuestionIdx === totalQuestions - 1 ? setShowConfirmModal(true) : setCurrentQuestionIdx(v => v + 1)} disabled={!isAnswered || isGrading} className="btn btn-primary" style={{minWidth: 120}}>{isGrading ? <Loader2 className="animate-spin" /> : (currentQuestionIdx === totalQuestions - 1 ? '제출하기' : '다음')}</button>
               </footer>
             </>
           )}
         </div>
       )}
+
+      <AnimatePresence>
+        {showConfirmModal && selectedQuiz && (
+          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)'}}>
+            <motion.div initial={{scale: 0.9, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.9, opacity: 0}} style={{background: 'var(--surface)', padding: 40, borderRadius: 32, width: '100%', maxWidth: 400, textAlign: 'center', boxShadow: '0 24px 48px rgba(0,0,0,0.2)'}}>
+              <h2 style={{fontSize: 24, fontWeight: 800, marginBottom: 12}}>답안 제출 확인</h2>
+              <div style={{fontSize: 15, color: 'var(--text-secondary)', marginBottom: 24}}>
+                총 {totalQuestions}문제 중 <strong style={{color: 'var(--primary)'}}>{Object.keys(answers).length}</strong>문제의 답안을 작성했습니다.
+              </div>
+              
+              {totalQuestions > Object.keys(answers).length && (
+                <div style={{background: 'rgba(231, 76, 60, 0.1)', padding: 16, borderRadius: 16, marginBottom: 24, textAlign: 'left'}}>
+                  <div style={{fontSize: 13, fontWeight: 700, color: '#E74C3C', marginBottom: 8}}><AlertCircle size={14} style={{display: 'inline', verticalAlign: 'text-bottom'}} /> 미답변 문제</div>
+                  <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
+                    {questions.map((q, idx) => {
+                      const ans = answers[q.id];
+                      const hasAns = q.type === 'short' ? !!(ans && (ans as string).trim()) : (Array.isArray(ans) && ans.length > 0);
+                      if (!hasAns) return <span key={q.id} style={{background: '#E74C3C', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx + 1}</span>;
+                      return null;
+                    })}
+                  </div>
+                </div>
+              )}
+              
+              <div style={{display: 'flex', gap: 16}}>
+                <button type="button" onClick={() => setShowConfirmModal(false)} className="btn btn-secondary" style={{flex: 1, padding: 16}}>돌아가기</button>
+                <button type="button" onClick={() => { setShowConfirmModal(false); gradeQuiz(); }} className="btn btn-primary" style={{flex: 1, padding: 16}}>제출하기</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showPasswordModal && (
