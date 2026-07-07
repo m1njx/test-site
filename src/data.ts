@@ -21,6 +21,8 @@ export interface Quiz {
   questions: Question[];
   isPublished?: boolean;
   visibleTo?: string[];
+  timeLimit?: number; // 퀴즈 제한 시간 (분)
+  shuffleQuestions?: boolean; // 문제 순서 셔플 여부
 }
 
 export const quizzes: Quiz[] = [];

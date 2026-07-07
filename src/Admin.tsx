@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { type Quiz, type Question, type QuestionType } from './data';
 import { type Student } from './team';
-import { getQuizResults, saveQuiz, deleteQuiz, saveStudent, deleteStudent, type Progress } from './api';
-import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle, Copy, Download } from 'lucide-react';
+import { getQuizResults, getAllProgress, saveQuiz, deleteQuiz, saveStudent, deleteStudent, type Progress } from './api';
+import { ArrowLeft, RefreshCw, Trash2, Edit3, Trash, Eye, EyeOff, FileText, Check, Users, UserPlus, ChevronRight, CheckCircle2, AlertCircle, Copy, Download, BarChart2 } from 'lucide-react';
 
 interface AdminProps {
   onBack: () => void;
@@ -15,7 +15,8 @@ interface AdminProps {
 import { fetchAiPreview, callGeminiWithFallback } from './gemini';
 
 export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, onRefreshTeam }: AdminProps) {
-  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team' | 'stats'>('results');
+  const [allStats, setAllStats] = useState<Progress[]>([]);
   const [selectedQuizId, setSelectedQuizId] = useState(dynamicQuizzes[0]?.id || '');
   const [results, setResults] = useState<Progress[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,6 +53,18 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       setShowQuizAiPreview(false);
     }
   }, [selectedQuizId, activeTab, fetchResults]);
+
+  useEffect(() => {
+    if (activeTab === 'stats') {
+      const fetchStats = async () => {
+        setLoading(true);
+        const data = await getAllProgress();
+        setAllStats(data);
+        setLoading(false);
+      };
+      fetchStats();
+    }
+  }, [activeTab]);
 
   const loadQuizForEdit = () => {
     const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
@@ -292,6 +305,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
         
         <div style={{display: 'flex', gap: 8, marginLeft: 'auto', background: 'var(--bg-color)', padding: 4, borderRadius: 12}}>
           <button onClick={() => setActiveTab('results')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'results' ? 'var(--surface)' : 'transparent', color: activeTab === 'results' ? 'var(--primary)' : 'var(--text-secondary)'}}>결과</button>
+          <button onClick={() => setActiveTab('stats')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'stats' ? 'var(--surface)' : 'transparent', color: activeTab === 'stats' ? 'var(--primary)' : 'var(--text-secondary)'}}>통계</button>
           <button onClick={() => { setActiveTab('create'); }} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'create' ? 'var(--surface)' : 'transparent', color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)'}}>퀴즈 생성</button>
           <button onClick={() => setActiveTab('team')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'team' ? 'var(--surface)' : 'transparent', color: activeTab === 'team' ? 'var(--primary)' : 'var(--text-secondary)'}}>팀원 관리</button>
         </div>
@@ -504,6 +518,56 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
           </>
         )}
 
+        {activeTab === 'stats' && (
+          <div style={{maxWidth: 800, margin: '0 auto'}}>
+            <h2 style={{fontSize: 20, fontWeight: 700, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 8}}><BarChart2 size={24} color="var(--primary)" /> 전체 성적 통계</h2>
+            {loading ? (
+              <div style={{textAlign: 'center', padding: 40, color: 'var(--text-tertiary)'}}><RefreshCw className="animate-spin" size={32} /></div>
+            ) : allStats.length === 0 ? (
+              <div style={{textAlign: 'center', padding: 40, color: 'var(--text-tertiary)'}}>아직 제출된 성적 데이터가 없습니다.</div>
+            ) : (
+              <div style={{display: 'flex', flexDirection: 'column', gap: 24}}>
+                <div style={{display: 'flex', gap: 16, flexWrap: 'wrap'}}>
+                  <div className="admin-stat-card">
+                    <div style={{fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8}}>총 풀이 횟수</div>
+                    <div style={{fontSize: 32, fontWeight: 800, color: 'var(--primary)'}}>{allStats.length}회</div>
+                  </div>
+                  <div className="admin-stat-card">
+                    <div style={{fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8}}>참여한 학생 수</div>
+                    <div style={{fontSize: 32, fontWeight: 800, color: 'var(--primary)'}}>{new Set(allStats.map(s => s.studentId)).size}명</div>
+                  </div>
+                  <div className="admin-stat-card">
+                    <div style={{fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8}}>전체 평균 정답률</div>
+                    <div style={{fontSize: 32, fontWeight: 800, color: 'var(--primary)'}}>
+                      {Math.round(allStats.reduce((acc, curr) => acc + (curr.score / curr.total), 0) / allStats.length * 100)}%
+                    </div>
+                  </div>
+                </div>
+                
+                <div style={{background: 'var(--surface)', padding: 24, borderRadius: 16, border: '1px solid var(--border)'}}>
+                  <h3 style={{fontSize: 16, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)'}}>퀴즈별 평균 정답률</h3>
+                  {dynamicQuizzes.map(quiz => {
+                    const quizStats = allStats.filter(s => s.quizId === quiz.id);
+                    if (quizStats.length === 0) return null;
+                    const avgRate = Math.round(quizStats.reduce((acc, curr) => acc + (curr.score / curr.total), 0) / quizStats.length * 100);
+                    return (
+                      <div key={quiz.id} style={{marginBottom: 16}}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 14, fontWeight: 600}}>
+                          <span>{quiz.title}</span>
+                          <span>{avgRate}% ({quizStats.length}명 참여)</span>
+                        </div>
+                        <div style={{height: 8, background: 'var(--bg-color)', borderRadius: 4, overflow: 'hidden'}}>
+                          <div style={{height: '100%', background: 'var(--primary)', width: `${avgRate}%`}}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'create' && (
           <div style={{maxWidth: 720, margin: '0 auto'}}>
             {/* Create Quiz UI */}
@@ -535,6 +599,18 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <input type="text" value={activeQuiz.title} onChange={(e) => setActiveQuiz({...activeQuiz, title: e.target.value})} placeholder="퀴즈 제목" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
                 <input type="date" value={activeQuiz.date} onChange={(e) => setActiveQuiz({...activeQuiz, date: e.target.value, id: `q-${e.target.value}`})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15}}/>
                 <textarea value={activeQuiz.description} onChange={(e) => setActiveQuiz({...activeQuiz, description: e.target.value})} placeholder="상세 설명" style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, minHeight: 80}}/>
+                <div style={{display: 'flex', gap: 16, alignItems: 'center'}}>
+                  <div style={{flex: 1}}>
+                    <label style={{display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 6, color: 'var(--text-secondary)'}}>제한 시간 (분)</label>
+                    <input type="number" min="0" value={activeQuiz.timeLimit || ''} onChange={(e) => setActiveQuiz({...activeQuiz, timeLimit: e.target.value ? parseInt(e.target.value) : undefined})} placeholder="제한 없음" style={{width: '100%', padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 14}}/>
+                  </div>
+                  <div style={{flex: 1, display: 'flex', alignItems: 'center', height: '100%', paddingTop: 24}}>
+                    <label style={{display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14, fontWeight: 600}}>
+                      <input type="checkbox" checked={!!activeQuiz.shuffleQuestions} onChange={(e) => setActiveQuiz({...activeQuiz, shuffleQuestions: e.target.checked})} style={{width: 18, height: 18, cursor: 'pointer'}}/>
+                      문제 순서 랜덤 셔플
+                    </label>
+                  </div>
+                </div>
                 
                 <div style={{borderTop: '1px solid var(--border)', paddingTop: 16}}>
                   <label style={{display: 'block', fontSize: 14, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)'}}>대상 팀원 설정</label>

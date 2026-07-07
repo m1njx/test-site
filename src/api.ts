@@ -1,5 +1,5 @@
 import { db, isMock } from './firebase';
-import { collection, setDoc, getDocs, doc, query, where, deleteDoc } from 'firebase/firestore';
+import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy } from 'firebase/firestore';
 import type { Quiz } from './data';
 
 import { ADMIN_ID } from './team';
@@ -108,6 +108,21 @@ export async function getStudentProgress(studentId: string): Promise<Progress[]>
   } catch (error) {
     console.error("Error getting student progress:", error);
     return cached ? cached.data : [];
+  }
+}
+
+export async function getAllProgress(): Promise<Progress[]> {
+  try {
+    if (isMock) {
+      const stored = localStorage.getItem('aim_progress');
+      return stored ? JSON.parse(stored) : [];
+    }
+    const q = query(collection(db, "progress"), orderBy("timestamp", "desc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => doc.data() as Progress);
+  } catch (error) {
+    console.error("Error getting all progress:", error);
+    return [];
   }
 }
 

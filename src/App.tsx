@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield } from 'lucide-react';
+import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, getStudentName, type Student } from './team';
 import { saveScore, getStudentProgress, getQuizzes, getStudents, type Progress } from './api';
@@ -42,6 +42,49 @@ export default function App() {
   const [studentProgress, setStudentProgress] = useState<Progress[]>([]);
   const [expandedAnswers, setExpandedAnswers] = useState<Record<string, boolean>>({});
 
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('aim_theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [shouldAutoSubmit, setShouldAutoSubmit] = useState(false);
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.body.classList.add('dark');
+      localStorage.setItem('aim_theme', 'dark');
+    } else {
+      document.body.classList.remove('dark');
+      localStorage.setItem('aim_theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    let timerId: ReturnType<typeof setInterval>;
+    if (currentView === 'quiz' && timeLeft !== null && timeLeft > 0 && !showResults && !isGrading) {
+      timerId = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev && prev <= 1) {
+            clearInterval(timerId);
+            setShouldAutoSubmit(true);
+            return 0;
+          }
+          return prev ? prev - 1 : 0;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timerId);
+  }, [currentView, timeLeft, showResults, isGrading]);
+
+  useEffect(() => {
+    if (shouldAutoSubmit) {
+      setShouldAutoSubmit(false);
+      alert("제한 시간이 초과되었습니다. 자동으로 답안을 제출합니다.");
+      gradeQuiz();
+    }
+  }, [shouldAutoSubmit]);
+
   const loadTeam = async () => {
     const students = await getStudents();
     setDynamicTeam(students);
@@ -78,8 +121,8 @@ export default function App() {
 
   const handlePasswordSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD || "121600";
-    if (adminPassword === correctPassword) {
+    const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD;
+    if (adminPassword === correctPassword && correctPassword) {
       setShowPasswordModal(false);
       setCurrentView('admin');
     } else {
@@ -125,10 +168,17 @@ export default function App() {
 
   const startQuiz = (quiz: Quiz) => {
     if (quiz.questions.length === 0) return;
-    setSelectedQuiz(quiz);
+    
+    let quizToStart = quiz;
+    if (quiz.shuffleQuestions) {
+      const shuffled = [...quiz.questions].sort(() => Math.random() - 0.5);
+      quizToStart = { ...quiz, questions: shuffled };
+    }
+    
+    setSelectedQuiz(quizToStart);
     setCurrentQuestionIdx(0);
     
-    const savedKey = `aim_quiz_answers_${quiz.id}_${loggedInUser}`;
+    const savedKey = `aim_quiz_answers_${quizToStart.id}_${loggedInUser}`;
     const saved = localStorage.getItem(savedKey);
     if (saved) {
       try {
@@ -138,6 +188,12 @@ export default function App() {
       }
     } else {
       setAnswers({});
+    }
+    
+    if (quizToStart.timeLimit) {
+      setTimeLeft(quizToStart.timeLimit * 60);
+    } else {
+      setTimeLeft(null);
     }
     
     setResults({});
@@ -276,9 +332,14 @@ export default function App() {
             <div style={{fontWeight: 700, color: 'var(--text-secondary)'}}>
               안녕하세요, <span style={{color: 'var(--primary)'}}>{getStudentName(loggedInUser, dynamicTeam)}</span>님
             </div>
-            <button onClick={handleLogout} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4}}>
-              <LogOut size={16} /> 로그아웃
-            </button>
+            <div style={{display: 'flex', alignItems: 'center', gap: 16}}>
+              <button onClick={() => setIsDarkMode(!isDarkMode)} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center'}}>
+                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
+              <button onClick={handleLogout} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4}}>
+                <LogOut size={16} /> 로그아웃
+              </button>
+            </div>
           </div>
 
           {loggedInUser === ADMIN_ID ? (
@@ -412,6 +473,12 @@ export default function App() {
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
                   <button onClick={goHome} style={{background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--text-secondary)'}}><Home size={18} /> 나가기</button>
                   <div style={{fontWeight: 800, fontSize: 16}}>{selectedQuiz.title}</div>
+                  {timeLeft !== null ? (
+                    <div style={{display: 'flex', alignItems: 'center', gap: 4, fontWeight: 700, fontSize: 15, color: timeLeft <= 60 ? 'var(--incorrect)' : 'var(--text-secondary)'}}>
+                      <Clock size={16} />
+                      {Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}
+                    </div>
+                  ) : <div style={{width: 80}}></div>}
                 </div>
                 <div style={{height: 6, background: 'var(--bg-color)', borderRadius: 3, overflow: 'hidden'}}><div style={{height: '100%', background: 'var(--primary)', width: `${progress}%`, transition: 'width 0.3s'}} /></div>
                 <div style={{display: 'flex', gap: 8, marginTop: 16, overflowX: 'auto', paddingBottom: 8}}>
