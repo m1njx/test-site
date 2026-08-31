@@ -349,13 +349,13 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 
   return (
     <div className="app-container" style={{background: 'var(--surface)', padding: 0, maxWidth: 1000}}>
-      <header className="app-header" style={{display: 'flex', alignItems: 'center', gap: 16, borderBottom: '1px solid var(--border)'}}>
+      <header className="app-header" style={{display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderBottom: '1px solid var(--border)'}}>
         <button onClick={handleHeaderBack} style={{background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-primary)'}}>
           <ArrowLeft size={24} />
         </button>
         <h1 style={{fontSize: 20, fontWeight: 700, margin: 0}}>관리자 센터</h1>
-        
-        <div style={{display: 'flex', gap: 8, marginLeft: 'auto', background: 'var(--bg-color)', padding: 4, borderRadius: 12}}>
+
+        <div className="admin-tabbar" style={{marginLeft: 'auto'}}>
           <button onClick={() => setActiveTab('results')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'results' ? 'var(--surface)' : 'transparent', color: activeTab === 'results' ? 'var(--primary)' : 'var(--text-secondary)'}}>결과</button>
           <button onClick={() => setActiveTab('stats')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'stats' ? 'var(--surface)' : 'transparent', color: activeTab === 'stats' ? 'var(--primary)' : 'var(--text-secondary)'}}>통계</button>
           <button onClick={() => { setActiveTab('create'); }} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'create' ? 'var(--surface)' : 'transparent', color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)'}}>퀴즈 생성</button>

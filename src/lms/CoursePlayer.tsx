@@ -171,9 +171,9 @@ export default function CoursePlayer({
         {doneCount}/{flat.length} 레슨 완료
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 260px) 1fr', gap: 24, alignItems: 'start' }}>
+      <div className="course-layout">
         {/* 좌측: 레슨 목록 */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="course-lesson-list" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {course.modules
             .slice()
             .sort((a, b) => a.order - b.order)

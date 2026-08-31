@@ -74,14 +74,12 @@ export default function CourseHome({ courses, lessonProgress, studentId, onSelec
             <button
               key={course.id}
               onClick={() => onSelect(course)}
-              className="quiz-card"
+              className="lms-card"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                textAlign: 'left',
-                width: '100%',
-                border: finished ? '1px solid rgba(39,174,96,0.4)' : undefined,
+                border: finished ? '1px solid rgba(39,174,96,0.4)' : '1px solid var(--border)',
               }}
             >
               <Ring pct={pct} done={finished} />

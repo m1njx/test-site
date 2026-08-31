@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { RefreshCw, Download, CheckCircle2, Circle } from 'lucide-react';
 import type { Course, LessonProgress } from '../types';
 import { flattenLessons } from '../types';
@@ -87,8 +87,8 @@ export default function CompletionBoard({ team }: Props) {
             </thead>
             <tbody>
               {team.map((s) => (
-                <>
-                  <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
+                <Fragment key={s.id}>
+                  <tr style={{ cursor: 'pointer' }} onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
                     <td style={{ ...td, fontWeight: 700 }}>
                       {s.name}
                       <span style={{ color: 'var(--text-tertiary)', fontWeight: 400, marginLeft: 6 }}>{s.id}</span>
@@ -131,7 +131,7 @@ export default function CompletionBoard({ team }: Props) {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>

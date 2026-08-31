@@ -533,3 +533,58 @@ body.dark .option-btn.selected {
   background: rgba(79, 149, 255, 0.1);
   border-color: var(--primary);
 }
+
+/* ===== LMS (코스/강의) ===== */
+.course-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (min-width: 768px) {
+  .course-layout {
+    grid-template-columns: minmax(0, 260px) 1fr;
+    gap: 28px;
+  }
+}
+
+/* 모바일에서 레슨 목록이 너무 길어지지 않도록 */
+@media (max-width: 767px) {
+  .course-lesson-list {
+    max-height: 260px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 6px;
+  }
+}
+
+.lms-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 20px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.lms-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.lms-card:active { transform: scale(0.99); }
+
+body.dark .lms-card { background: var(--surface); }
+
+/* 관리자 탭바: 좁은 화면에서 줄바꿈 */
+.admin-tabbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--bg-color);
+  padding: 4px;
+  border-radius: 12px;
+}

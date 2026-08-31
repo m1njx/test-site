@@ -265,6 +265,8 @@ export default function VideoPlayer({
       if (cancelled || !ytHostRef.current) return;
       player = new YT.Player(ytHostRef.current, {
         videoId: lesson.youtubeId,
+        width: '100%',
+        height: '100%',
         playerVars: { rel: 0, modestbranding: 1, disablekb: 1, playsinline: 1 },
         events: {
           onReady: () => {
