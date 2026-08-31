@@ -60,7 +60,7 @@ export default function Login({ onLogin }: LoginProps) {
           }}
         />
         
-        {error && <p style={{color: '#E74C3C', fontSize: 14, marginBottom: 24}}>{error}</p>}
+        {error && <p style={{color: 'var(--incorrect)', fontSize: 14, marginBottom: 24}}>{error}</p>}
         
         <button type="submit" className="btn btn-primary" style={{width: '100%', justifyContent: 'center'}} disabled={isLoggingIn}>
           {isLoggingIn ? '확인 중...' : '입장하기'}

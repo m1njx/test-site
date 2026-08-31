@@ -1,0 +1,75 @@
+rules_version = '2';
+
+// AIM TEAM LMS — Firestore 보안 규칙
+//
+// 현재 앱은 Firebase Auth 를 쓰지 않고 학번만으로 로그인하므로,
+// 규칙 단계에서 "본인 문서만 쓰기" 같은 진짜 권한 분리는 불가능하다.
+// 아래 규칙은 그 전제 위에서 할 수 있는 최소한의 방어선이다:
+//   - 컬렉션 화이트리스트 (모르는 경로 전면 차단)
+//   - 문서 크기/형식 검증
+//   - 성적·진도의 임의 삭제 금지
+//
+// 제대로 잠그려면 docs/SECURITY.md 의 "Auth 도입" 절차를 따를 것.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 기본값: 전부 차단. 아래에서 명시한 경로만 열린다.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 팀원 명부 — 로그인 시 조회. 쓰기는 콘솔/관리자만(여기선 차단).
+    match /students/{studentId} {
+      allow read: if true;
+      allow write: if false; // 팀원 추가/삭제는 Firebase 콘솔에서 수행
+    }
+
+    // 퀴즈 정의 — 학생은 읽기만. 정답이 포함되므로 이상적이진 않지만
+    // 클라이언트 채점 구조상 불가피하다(서버 채점으로 옮기면 해결).
+    match /quizzes/{quizId} {
+      allow read: if true;
+      allow write: if false; // 관리자 작업은 콘솔에서
+    }
+
+    match /courses/{courseId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /announcements/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // 성적 — 생성/수정은 허용하되 삭제는 금지, 형식도 검증
+    match /progress/{docId} {
+      allow read: if true;
+      allow create, update: if isValidProgress();
+      allow delete: if false;
+    }
+
+    // 레슨 진도 — 동일
+    match /lessonProgress/{docId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasAll(['studentId', 'lessonId', 'status'])
+                            && request.resource.data.status in ['in_progress', 'completed'];
+      allow delete: if false;
+    }
+
+    // 부정행위 로그 — 생성/추가만 허용, 삭제 금지(증거 보전)
+    match /proctorSessions/{sessionId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.keys().hasAll(['studentId', 'quizId'])
+                            && request.resource.data.events.size() <= 500;
+      allow delete: if false;
+    }
+
+    function isValidProgress() {
+      let d = request.resource.data;
+      return d.keys().hasAll(['studentId', 'quizId', 'score', 'total'])
+             && d.score is int && d.total is int
+             && d.score >= 0 && d.total >= 0 && d.score <= d.total;
+    }
+  }
+}

@@ -1,58 +1,99 @@
-# 🚀 학생 퀴즈 및 평가 플랫폼 (Quiz Platform)
+# 🎓 AIM TEAM LMS
 
-학생들이 일일 퀴즈를 풀고 실시간으로 실력을 점검할 수 있는 React 기반의 고성능 교육용 플랫폼입니다. 파이썬 코드 채점 엔진(Pyodide)과 Firebase를 연동하여 강력한 관리 기능을 제공합니다.
+동아리 학습 관리 플랫폼. **영상 강의 이수 관리**와 **AI 채점 퀴즈**를 한 곳에서 운영합니다.
+React(TypeScript) + Firestore 기반의 서버리스 앱입니다.
 
 ## ✨ 주요 기능
 
-### 👨‍🎓 학생용 기능
-- **실시간 코드 채점**: Pyodide를 브라우저에서 실행하여 파이썬 코드를 즉시 평가 및 채점합니다.
-- **다양한 문제 유형**: 객관식, 주관식(파이썬 코딩) 등 혼합형 퀴즈를 지원합니다.
-- **개인별 진도 관리**: 로그인 유지 기능을 통해 자신의 퀴즈 완주율과 점수를 지속적으로 추적합니다.
-- **직관적인 피드백**: 제출 후 문항별 정답 여부와 상세 해설을 즉시 확인할 수 있습니다.
+### 👨‍🎓 학생
+- **코스 학습** — `코스 > 모듈 > 레슨(영상 | 퀴즈)` 구조. 진행률과 이수 여부를 한눈에.
+- **꼼수 없는 영상 시청** — 앞으로 건너뛰기 차단, 배속 제한, 탭 이탈 시 자동 일시정지,
+  실제로 본 구간만 누적 집계. 설정한 비율(기본 95%) 이상 시청해야 이수 처리됩니다.
+  이어보기와 순차 잠금(이전 레슨 완료 전 다음 레슨 잠금)도 지원합니다.
+- **퀴즈 응시** — 객관식(단일/복수정답), 주관식(파이썬 코드) 혼합. 제한 시간, 응시 횟수 제한,
+  문제 셔플, 답안 임시 저장, 미답변 건너뛰기.
+- **AI 채점 및 피드백** — Gemini 가 주관식을 채점하고 오답 원인·모범 답안·해설을 제공합니다.
+  (실패 시 브라우저 내 Pyodide 로 파이썬 실행 채점으로 대체)
+- **오답 노트** — 틀린 문제를 자동으로 모아 다시 볼 수 있습니다.
 
-### 👩‍🏫 관리자 전용 기능 (Admin Dashboard)
-- **동적 퀴즈 생성기**: 코드 수정 없이 브라우저 상에서 즉시 새로운 퀴즈를 생성하고 배포할 수 있습니다.
-- **퀴즈 관리**: 기존 퀴즈의 내용을 수정하거나 삭제할 수 있으며, 공개/비공개 상태를 설정하여 배포 시점을 조절할 수 있습니다.
-- **대량 문제 추가 (Bulk Import)**: JSON 형식을 지원하여 수많은 문제를 한꺼번에 등록할 수 있습니다.
-- **실시간 모니터링**: 팀원 전체의 제출 현황, 평균 점수, 문항별 정답률을 시각화된 대시보드로 확인합니다.
+### 👩‍🏫 관리자
+- **코스 빌더** — 모듈/레슨 구성, 순서 변경, 대상 팀원 지정, 공개 여부.
+  영상은 **YouTube 링크** 또는 **직접 업로드한 mp4**(자체 비디오 서버) 모두 가능합니다.
+- **퀴즈 생성기** — 브라우저에서 문제 작성·수정·복제, 저장 전 유효성 검사.
+- **이수 현황** — 학생 × 코스 매트릭스, 레슨별 완료 여부, CSV 내보내기.
+- **부정행위 로그** — 응시 중 화면 이탈·복사·붙여넣기·우클릭·개발자도구·PrintScreen 입력을
+  타임라인으로 기록하고, 가중 점수가 임계치를 넘으면 자동으로 표시합니다.
+  퀴즈마다 모니터링 수준을 **없음 / 로그만 / 엄격(전체화면 강제)** 중에서 고를 수 있습니다.
+- **통계** — 퀴즈별 평균 정답률, 자주 틀리는 문제, 리더보드, 미제출자 확인.
+
+> ⚠️ 웹에서는 실제 스크린샷 캡처를 감지할 수 없습니다(특히 모바일).
+> 기록되는 것은 키 입력과 화면 이탈 이벤트이며, 한계는 [docs/SECURITY.md](docs/SECURITY.md)에 정리해 두었습니다.
 
 ## 🛠 기술 스택
 
-- **Frontend**: React (TypeScript), Vite, Framer Motion
-- **Database**: Firebase Firestore
-- **Engine**: Pyodide (WebAssembly-based Python)
-- **Styling**: Vanilla CSS (Toss Style Design System)
-- **Deployment**: Render
+| 영역 | 사용 기술 |
+|---|---|
+| Frontend | React 19 (TypeScript), Vite, Framer Motion, lucide-react |
+| Database | Firebase Firestore (무료 Spark 플랜 범위) |
+| AI 채점 | Google Gemini API |
+| 코드 실행 | Pyodide (WebAssembly Python, 필요할 때만 지연 로딩) |
+| 영상 호스팅 | YouTube 링크 또는 자체 비디오 서버 (`video-server/`, Docker) |
+| 배포 | Render (정적 사이트) |
 
-## 📦 설치 및 실행 방법
+## 📦 설치 및 실행
 
-### 1. 저장소 클론 및 패키지 설치
 ```bash
 git clone https://github.com/m1njx/test-site.git
 cd test-site
 npm install
-```
-
-### 2. 환경 변수 설정 (.env)
-루트 디렉토리에 `.env` 파일을 생성하고 Firebase 정보를 입력하세요. (정보가 없으면 Mock 모드로 동작합니다.)
-```env
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-```
-
-### 3. 개발 서버 실행
-```bash
+cp .env.example .env    # 값을 채워주세요
 npm run dev
 ```
 
-## 🚀 배포 및 자동화
-이 프로젝트는 **Render**와 연동되어 GitHub Push 시 자동으로 빌드 및 배포됩니다.
+### 환경 변수
+
+`.env.example` 을 복사해 채웁니다. Firebase 키가 없으면 브라우저 localStorage 를 쓰는
+**Mock 모드**로 동작하므로, 설정 없이도 전체 기능을 시험해볼 수 있습니다.
+
+| 변수 | 설명 |
+|---|---|
+| `VITE_FIREBASE_*` | Firebase 설정 6종. 없으면 Mock 모드 |
+| `VITE_GEMINI_API_KEY` | AI 채점용 키 |
+| `VITE_ADMIN_PASSWORD_HASH` | 관리자 비밀번호의 **SHA-256 해시** |
+| `VITE_VIDEO_SERVER_URL` | 자체 비디오 서버 주소 (mp4 업로드 시에만) |
+| `VITE_VIDEO_UPLOAD_TOKEN` | 업로드 토큰. **관리자 비밀번호와 반드시 다르게** |
+
+관리자 비밀번호 해시 만들기:
+
+```bash
+printf '원하는비밀번호' | shasum -a 256
+```
+
+## 🎥 영상 호스팅
+
+- **YouTube 미등록(unlisted) 링크** — 비용 0, 별도 인프라 불필요. 대부분의 경우 권장.
+- **자체 mp4 호스팅** — 외부에 올릴 수 없는 강의용. `video-server/` 를 Docker 로 띄웁니다.
+  설치·배포·비용은 [video-server/README.md](video-server/README.md) 참고.
+
+## 🔒 보안
+
+서버가 없는 정적 사이트라 구조적으로 클라이언트를 신뢰해야 하는 지점이 있습니다.
+**무엇이 막히고 무엇이 안 막히는지**와 Firestore 규칙 배포 방법은
+[docs/SECURITY.md](docs/SECURITY.md) 에 정리되어 있습니다. 운영 전에 한 번 읽어보세요.
+
+```bash
+firebase deploy --only firestore:rules
+```
+
+## 🚀 배포
+
+Render 정적 사이트로 배포되며 GitHub push 시 자동 빌드됩니다.
+
 - **Build Command**: `npm install && npm run build`
 - **Publish Directory**: `dist`
+- 환경 변수는 Render 대시보드의 **Environment** 탭에도 동일하게 넣어야 합니다.
+
+비디오 서버는 별도 배포가 필요합니다(같은 서비스에 얹을 수 없음).
 
 ---
-Developed by **강민제**
+Developed by **AIM TEAM** (Main Developer: 강민제)

@@ -25,6 +25,7 @@ export interface Quiz {
   shuffleQuestions?: boolean; // 문제 순서 셔플 여부
   maxAttempts?: number; // 최대 응시 가능 횟수
   deadline?: string; // 마감 기한 (ISO 문자열)
+  proctoring?: 'off' | 'log' | 'strict'; // 부정행위 모니터링 수준 (기본: log)
 }
 
 export const quizzes: Quiz[] = [];

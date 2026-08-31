@@ -6,34 +6,36 @@ import { PROCTOR_FLAG_THRESHOLD } from './types';
 interface Props {
   active: boolean;
   sessionId: string | null;
-  requireFullscreen?: boolean;
+  /** 'log' = 이벤트 기록만 (전체화면 강제 X, 차분한 안내) · 'strict' = 전체화면 강제 + 경고 배너 */
+  mode?: 'log' | 'strict';
   children: React.ReactNode;
 }
 
 /**
- * 퀴즈 응시 UI 를 감싸 부정행위 로깅 + 전체화면 유도 + 경고 배너를 제공.
+ * 퀴즈 응시 UI 를 감싸 부정행위 로깅(+ strict 모드에서 전체화면 유도)을 제공.
  * 학생을 차단하지 않고 "경고 + 전부 기록" 방침.
  */
-export default function ProctorShell({ active, sessionId, requireFullscreen = true, children }: Props) {
+export default function ProctorShell({ active, sessionId, mode = 'strict', children }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [fsDismissed, setFsDismissed] = useState(false);
+  const strict = mode === 'strict';
   const { flagScore, flagged, awayCount, fullscreenActive } = useProctor({
     enabled: active,
     sessionId,
   });
 
-  // 시작 시 전체화면 요청 (사용자 제스처 맥락에서 최초 1회)
+  // strict 모드: 시작 시 전체화면 요청 (사용자 제스처 맥락에서 최초 1회)
   useEffect(() => {
-    if (!active || !requireFullscreen) return;
+    if (!active || !strict) return;
     const t = window.setTimeout(() => {
       if (!isFullscreen()) enterFullscreen(wrapRef.current || undefined);
     }, 300);
     return () => window.clearTimeout(t);
-  }, [active, requireFullscreen]);
+  }, [active, strict]);
 
   if (!active) return <>{children}</>;
 
-  const showFsBar = requireFullscreen && !fullscreenActive && !fsDismissed;
+  const showFsBar = strict && !fullscreenActive && !fsDismissed;
 
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
@@ -44,20 +46,26 @@ export default function ProctorShell({ active, sessionId, requireFullscreen = tr
           alignItems: 'center',
           gap: 8,
           flexWrap: 'wrap',
-          padding: '8px 14px',
+          padding: strict || flagged ? '8px 14px' : '6px 12px',
           borderRadius: 12,
           marginBottom: 12,
-          fontSize: 12,
+          fontSize: strict || flagged ? 12 : 11,
           fontWeight: 600,
-          background: flagged ? 'rgba(231,76,60,0.12)' : 'rgba(49,130,246,0.08)',
-          color: flagged ? 'var(--incorrect)' : 'var(--primary)',
+          background: flagged
+            ? 'var(--incorrect-soft)'
+            : strict
+              ? 'var(--primary-soft)'
+              : 'var(--bg-color)',
+          color: flagged ? 'var(--incorrect)' : strict ? 'var(--primary)' : 'var(--text-tertiary)',
         }}
       >
-        <Eye size={14} />
+        <Eye size={strict || flagged ? 14 : 12} />
         {flagged ? (
           <span>부정행위 의심 활동이 다수 감지되었습니다. 모든 활동이 기록되고 있습니다.</span>
+        ) : strict ? (
+          <span>응시 중 화면 이탈·복사·개발자도구 사용은 자동으로 기록됩니다. 전체화면을 유지해주세요.</span>
         ) : (
-          <span>응시 중 화면 이탈·복사·개발자도구 사용은 자동으로 기록됩니다.</span>
+          <span>응시 활동(화면 이탈·복사 등)이 기록됩니다.</span>
         )}
         {awayCount > 0 && (
           <span style={{ marginLeft: 'auto', color: 'var(--incorrect)' }}>화면 이탈 {awayCount}회</span>
@@ -76,7 +84,7 @@ export default function ProctorShell({ active, sessionId, requireFullscreen = tr
             marginBottom: 12,
             fontSize: 13,
             fontWeight: 700,
-            background: 'rgba(231,76,60,0.1)',
+            background: 'var(--incorrect-soft)',
             color: 'var(--incorrect)',
           }}
         >

@@ -93,7 +93,7 @@ export default function ProctorLogBoard({ team }: Props) {
                 key={s.id}
                 style={{
                   border: s.flagged ? '1px solid var(--incorrect)' : '1px solid var(--border)',
-                  background: s.flagged ? 'rgba(231,76,60,0.05)' : 'var(--surface)',
+                  background: s.flagged ? 'var(--incorrect-soft)' : 'var(--surface)',
                   borderRadius: 14,
                   padding: 14,
                 }}
@@ -138,7 +138,7 @@ export default function ProctorLogBoard({ team }: Props) {
                               <span style={{ color: 'var(--text-tertiary)', minWidth: 62 }}>
                                 +{((e.ts - s.startedAt) / 1000).toFixed(0)}s
                               </span>
-                              <span style={{ fontWeight: 600, color: w >= 2 ? 'var(--incorrect)' : w > 0 ? '#F39C12' : 'var(--text-secondary)' }}>
+                              <span style={{ fontWeight: 600, color: w >= 2 ? 'var(--incorrect)' : w > 0 ? 'var(--warn)' : 'var(--text-secondary)' }}>
                                 {PROCTOR_EVENT_LABELS[e.type] || e.type}
                               </span>
                               {e.detail && <span style={{ color: 'var(--text-tertiary)' }}>{e.detail}</span>}

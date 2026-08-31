@@ -236,7 +236,24 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
   };
 
   const handleSaveQuiz = async () => {
-    if (!activeQuiz.title || activeQuiz.questions.length === 0) { alert("제목과 문제를 입력해주세요."); return; }
+    if (!activeQuiz.title.trim()) { alert("퀴즈 제목을 입력해주세요."); return; }
+    if (activeQuiz.questions.length === 0) { alert("문제를 최소 1개 이상 추가해주세요."); return; }
+
+    // 저장 전 문항 유효성 검사 — 잘못된 퀴즈가 배포되면 학생이 풀 수 없다
+    for (let i = 0; i < activeQuiz.questions.length; i++) {
+      const q = activeQuiz.questions[i];
+      const label = `${i + 1}번 문제`;
+      if (!q.title.trim()) { alert(`${label}: 질문을 입력해주세요.`); return; }
+      if (q.type !== 'short') {
+        const filled = (q.options || []).filter(o => o.trim());
+        if (filled.length < 2) { alert(`${label}: 보기를 2개 이상 입력해주세요.`); return; }
+        if ((q.options || []).some(o => !o.trim())) { alert(`${label}: 비어 있는 보기가 있습니다.`); return; }
+        if (!q.correctAnswers || q.correctAnswers.length === 0) { alert(`${label}: 정답 보기를 선택해주세요.`); return; }
+        const maxIdx = (q.options || []).length - 1;
+        if (q.correctAnswers.some(c => parseInt(c) > maxIdx)) { alert(`${label}: 정답 지정이 보기 범위를 벗어났습니다. 다시 선택해주세요.`); return; }
+      }
+    }
+
     setLoading(true);
     try {
       await saveQuiz(activeQuiz);
@@ -269,7 +286,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <div style={{textAlign: 'right', display: 'flex', alignItems: 'center', gap: 12}}>
                   {isCompleted ? (
                     <>
-                      <div style={{color: '#27AE60', fontWeight: 700, fontSize: 18}}>{result.score} / {result.total}</div>
+                      <div style={{color: 'var(--correct)', fontWeight: 700, fontSize: 18}}>{result.score} / {result.total}</div>
                       <ChevronRight size={20} style={{transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', color: 'var(--text-tertiary)'}} />
                     </>
                   ) : (
@@ -279,7 +296,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               </div>
 
               {isExpanded && isCompleted && quiz && (
-                <div style={{padding: '0 20px 20px 20px', borderTop: '1px solid var(--bg-color)', background: 'rgba(49, 130, 246, 0.02)'}}>
+                <div style={{padding: '0 20px 20px 20px', borderTop: '1px solid var(--bg-color)', background: 'var(--primary-soft)'}}>
                   <div style={{marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12}}>
                     {quiz.questions.map((q, qIdx) => {
                       const isCorrect = result.detailedResults?.[q.id];
@@ -289,11 +306,11 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                       const aiExp = result.detailedResults ? result.detailedResults[`ai_exp_${q.id}`] : undefined;
 
                       return (
-                        <div key={q.id} style={{padding: 12, background: 'var(--surface)', borderRadius: 12, border: `1px solid ${isCorrect ? 'rgba(39, 174, 96, 0.2)' : 'rgba(231, 76, 60, 0.2)'}`}}>
+                        <div key={q.id} style={{padding: 12, background: 'var(--surface)', borderRadius: 12, border: `1px solid ${isCorrect ? 'var(--correct-soft)' : 'var(--incorrect)'}`}}>
                           <div style={{display: 'flex', gap: 10, alignItems: 'center', marginBottom: 8}}>
                             <span style={{fontSize: 12, fontWeight: 800, color: 'var(--text-tertiary)'}}>Q{qIdx + 1}</span>
                             <div style={{fontSize: 14, fontWeight: 600, flex: 1}}>{q.title}</div>
-                            {isCorrect ? <CheckCircle2 size={16} color="#27AE60" /> : <AlertCircle size={16} color="#E74C3C" />}
+                            {isCorrect ? <CheckCircle2 size={16} color="var(--correct)" /> : <AlertCircle size={16} color="var(--incorrect)" />}
                           </div>
                           {q.type === 'short' ? (
                             <div style={{marginTop: 8, fontSize: 13}}>
@@ -382,7 +399,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   <button onClick={loadQuizForEdit} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Edit3 size={18} /> 수정</button>
                   <button onClick={duplicateQuiz} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Copy size={18} /> 복제</button>
                   <button onClick={exportToCSV} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6}}><Download size={18} /> CSV</button>
-                  <button onClick={handleDeleteQuiz} style={{background: 'rgba(231, 76, 60, 0.05)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: '#E74C3C'}}><Trash size={18} /></button>
+                  <button onClick={handleDeleteQuiz} style={{background: 'var(--incorrect-soft)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--incorrect)'}}><Trash size={18} /></button>
                   <button onClick={fetchResults} disabled={loading} style={{background: 'var(--bg-color)', border: 'none', borderRadius: 12, padding: '0 16px', cursor: 'pointer', color: 'var(--primary)'}}><RefreshCw size={20} className={loading ? 'animate-spin' : ''} /></button>
                 </div>
               </div>
@@ -392,9 +409,9 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   onClick={() => setShowQuizAiPreview(!showQuizAiPreview)}
                   style={{
                     width: '100%',
-                    background: showQuizAiPreview ? 'rgba(49, 130, 246, 0.1)' : 'var(--bg-color)',
+                    background: showQuizAiPreview ? 'var(--primary-soft)' : 'var(--bg-color)',
                     color: 'var(--primary)',
-                    border: '1px solid rgba(49, 130, 246, 0.2)',
+                    border: '1px solid var(--primary-soft-strong)',
                     padding: '12px 20px',
                     borderRadius: 12,
                     fontWeight: 700,
@@ -429,7 +446,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                         <div style={{fontWeight: 700, fontSize: 14, marginBottom: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center'}}>
                           <span style={{color: 'var(--primary)'}}>Q{idx + 1}.</span>
                           <span style={{flex: 1}}>{q.title}</span>
-                          <span style={{fontSize: 11, background: 'rgba(49, 130, 246, 0.1)', color: 'var(--primary)', padding: '2px 6px', borderRadius: 6}}>{q.type === 'short' ? '주관식' : '객관식'}</span>
+                          <span style={{fontSize: 11, background: 'var(--primary-soft)', color: 'var(--primary)', padding: '2px 6px', borderRadius: 6}}>{q.type === 'short' ? '주관식' : q.type === 'multiple-multi' ? '객관식 · 복수정답' : '객관식 · 단일정답'}</span>
                         </div>
                         
                         {q.type === 'short' ? (
@@ -468,7 +485,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             {aiPreviews[`quiz_${q.id}`] && !aiPreviews[`quiz_${q.id}`].loading && (
                               <div style={{marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8}}>
                                 {aiPreviews[`quiz_${q.id}`].error ? (
-                                  <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
+                                  <div style={{color: 'var(--incorrect)', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
                                 ) : (
                                   <>
                                     <div>
@@ -494,9 +511,9 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                 {q.options?.map((opt, oIdx) => {
                                   const isCorrect = q.correctAnswers?.includes(oIdx.toString());
                                   return (
-                                    <div key={oIdx} style={{padding: '6px 10px', background: isCorrect ? 'rgba(39, 174, 96, 0.05)' : 'var(--surface)', borderRadius: 8, border: isCorrect ? '1px solid rgba(39, 174, 96, 0.3)' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6}}>
-                                      {isCorrect ? <CheckCircle2 size={14} color="#27AE60" /> : <div style={{width: 14}} />}
-                                      <span style={{color: isCorrect ? '#27AE60' : 'var(--text-secondary)', fontWeight: isCorrect ? 700 : 500}}>{opt}</span>
+                                    <div key={oIdx} style={{padding: '6px 10px', background: isCorrect ? 'var(--correct-soft)' : 'var(--surface)', borderRadius: 8, border: isCorrect ? '1px solid var(--correct)' : '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6}}>
+                                      {isCorrect ? <CheckCircle2 size={14} color="var(--correct)" /> : <div style={{width: 14}} />}
+                                      <span style={{color: isCorrect ? 'var(--correct)' : 'var(--text-secondary)', fontWeight: isCorrect ? 700 : 500}}>{opt}</span>
                                     </div>
                                   );
                                 })}
@@ -546,7 +563,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                               {aiPreviews[`quiz_${q.id}`] && !aiPreviews[`quiz_${q.id}`].loading && (
                                 <div style={{marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8}}>
                                   {aiPreviews[`quiz_${q.id}`].error ? (
-                                    <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
+                                    <div style={{color: 'var(--incorrect)', fontWeight: 600}}>{aiPreviews[`quiz_${q.id}`].error}</div>
                                   ) : (
                                     <div>
                                       <div style={{fontSize: 11, color: 'var(--text-secondary)', fontWeight: 700, marginBottom: 2}}>AI 분석 해설:</div>
@@ -621,7 +638,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                               </div>
                             </div>
                             <div style={{textAlign: 'right'}}>
-                              <div style={{fontSize: 18, fontWeight: 800, color: '#E74C3C'}}>{item.rate}%</div>
+                              <div style={{fontSize: 18, fontWeight: 800, color: 'var(--incorrect)'}}>{item.rate}%</div>
                               <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)', marginTop: 2}}>오답률</div>
                             </div>
                           </div>
@@ -648,7 +665,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                         </div>
                         <details style={{fontSize: 12, color: 'var(--text-secondary)'}}>
                           <summary style={{cursor: 'pointer', outline: 'none'}}>미응시자 확인</summary>
-                          <div style={{padding: 8, background: 'rgba(231, 76, 60, 0.05)', borderRadius: 8, marginTop: 4, color: '#E74C3C', fontWeight: 600}}>
+                          <div style={{padding: 8, background: 'var(--incorrect-soft)', borderRadius: 8, marginTop: 4, color: 'var(--incorrect)', fontWeight: 600}}>
                             {(() => {
                               const targetStudents = quiz.visibleTo && quiz.visibleTo.length > 0 
                                 ? dynamicTeam.filter(s => quiz.visibleTo!.includes(s.id))
@@ -691,7 +708,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             <div style={{flex: 1}}>
                               <div style={{fontWeight: 700, fontSize: 14, marginBottom: 6}}>{r.name}</div>
                               <div style={{height: 6, background: 'var(--surface)', borderRadius: 3, overflow: 'hidden'}}>
-                                <div style={{height: '100%', background: r.rate >= 80 ? '#27AE60' : (r.rate >= 50 ? 'var(--primary)' : '#E74C3C'), width: `${r.rate}%`}} />
+                                <div style={{height: '100%', background: r.rate >= 80 ? 'var(--correct)' : (r.rate >= 50 ? 'var(--primary)' : 'var(--incorrect)'), width: `${r.rate}%`}} />
                               </div>
                             </div>
                             <div style={{fontWeight: 800, fontSize: 16, color: 'var(--primary)'}}>{r.rate}%</div>
@@ -723,7 +740,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                 <div key={`${s.quizId}_${s.timestamp}`} style={{background: 'var(--surface)', padding: 16, borderRadius: 8, border: '1px solid var(--border)'}}>
                                   <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
                                     <span style={{fontWeight: 700, fontSize: 13}}>{q?.title || s.quizId}</span>
-                                    <span style={{fontWeight: 800, color: rate >= 80 ? '#27AE60' : 'var(--primary)', fontSize: 13}}>{rate}% ({s.bestScore ?? s.score}/{s.total})</span>
+                                    <span style={{fontWeight: 800, color: rate >= 80 ? 'var(--correct)' : 'var(--primary)', fontSize: 13}}>{rate}% ({s.bestScore ?? s.score}/{s.total})</span>
                                   </div>
                                   <div style={{display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-tertiary)'}}>
                                     <span>응시일: {new Date(s.timestamp).toLocaleString()}</span>
@@ -737,10 +754,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                         {Object.entries(s.detailedResults).filter(([k, v]) => !k.startsWith('reason_') && !k.startsWith('ans_') && v === false).map(([k]) => {
                                           const question = q?.questions.find(qu => qu.id === k);
                                           return (
-                                            <div key={k} style={{padding: 8, background: 'rgba(231, 76, 60, 0.05)', borderRadius: 6, border: '1px solid rgba(231, 76, 60, 0.1)'}}>
+                                            <div key={k} style={{padding: 8, background: 'var(--incorrect-soft)', borderRadius: 6, border: '1px solid var(--incorrect-soft)'}}>
                                               <div style={{fontSize: 12, fontWeight: 700, marginBottom: 4}}>{question?.title || k}</div>
                                               <div style={{fontSize: 12, color: 'var(--text-secondary)'}}>제출답안: {Array.isArray(s.detailedResults![`ans_${k}`]) ? s.detailedResults![`ans_${k}`].join(', ') : s.detailedResults![`ans_${k}`] || '(없음)'}</div>
-                                              {s.detailedResults![`reason_${k}`] && <div style={{fontSize: 11, color: '#E74C3C', marginTop: 4}}>{s.detailedResults![`reason_${k}`]}</div>}
+                                              {s.detailedResults![`reason_${k}`] && <div style={{fontSize: 11, color: 'var(--incorrect)', marginTop: 4}}>{s.detailedResults![`reason_${k}`]}</div>}
                                             </div>
                                           );
                                         })}
@@ -782,7 +799,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   }} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 12, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 600, fontSize: 14}}>
                     새 퀴즈
                   </button>
-                  <button onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', background: activeQuiz.isPublished ? 'rgba(39, 174, 96, 0.1)' : 'rgba(139, 149, 161, 0.1)', color: activeQuiz.isPublished ? '#27AE60' : 'var(--text-secondary)', fontWeight: 700, fontSize: 14}}>
+                  <button onClick={() => setActiveQuiz({...activeQuiz, isPublished: !activeQuiz.isPublished})} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 12, border: 'none', cursor: 'pointer', background: activeQuiz.isPublished ? 'var(--correct-soft)' : 'var(--muted-soft)', color: activeQuiz.isPublished ? 'var(--correct)' : 'var(--text-secondary)', fontWeight: 700, fontSize: 14}}>
                     {activeQuiz.isPublished ? <><Eye size={18} /> 공개</> : <><EyeOff size={18} /> 비공개</>}
                   </button>
                   <button onClick={handleSaveQuiz} disabled={loading} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', borderRadius: 12, border: 'none', cursor: 'pointer', background: 'var(--primary)', color: 'white', fontWeight: 700, fontSize: 14}}>{loading ? <RefreshCw className="animate-spin" size={18} /> : <><Check size={18} /> 저장하기</>}</button>
@@ -817,7 +834,41 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                     </label>
                   </div>
                 </div>
-                
+
+                <div style={{borderTop: '1px solid var(--border)', paddingTop: 16}}>
+                  <label style={{display: 'block', fontSize: 14, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)'}}>부정행위 모니터링</label>
+                  <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
+                    {([
+                      ['off', '없음', '기록하지 않음'],
+                      ['log', '로그만', '이탈·복사 등 기록 (전체화면 X)'],
+                      ['strict', '엄격', '전체화면 강제 + 경고'],
+                    ] as const).map(([val, title, desc]) => {
+                      const cur = activeQuiz.proctoring || 'log';
+                      const sel = cur === val;
+                      return (
+                        <button
+                          key={val}
+                          onClick={() => setActiveQuiz({...activeQuiz, proctoring: val})}
+                          title={desc}
+                          style={{
+                            padding: '8px 14px', borderRadius: 12, cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                            border: sel ? '1px solid var(--primary)' : '1px solid var(--border)',
+                            background: sel ? 'var(--primary-soft)' : 'var(--surface)',
+                            color: sel ? 'var(--primary)' : 'var(--text-secondary)',
+                          }}
+                        >
+                          {title}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{fontSize: 12, color: 'var(--text-tertiary)', marginTop: 6}}>
+                    {(activeQuiz.proctoring || 'log') === 'off' && '응시 활동을 기록하지 않습니다.'}
+                    {(activeQuiz.proctoring || 'log') === 'log' && '화면 이탈·복사·개발자도구 등을 기록하지만 전체화면을 강제하지 않습니다. (일일 퀴즈 권장)'}
+                    {(activeQuiz.proctoring || 'log') === 'strict' && '응시 시 전체화면을 강제하고 이탈 시 경고합니다. (중요 시험 권장)'}
+                  </div>
+                </div>
+
                 <div style={{borderTop: '1px solid var(--border)', paddingTop: 16}}>
                   <label style={{display: 'block', fontSize: 14, fontWeight: 700, marginBottom: 8, color: 'var(--text-secondary)'}}>대상 팀원 설정</label>
                   <div style={{display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center'}}>
@@ -866,7 +917,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                             fontSize: 13,
                             fontWeight: 600,
                             cursor: 'pointer',
-                            background: isSelected ? 'rgba(49, 130, 246, 0.1)' : 'var(--surface)',
+                            background: isSelected ? 'var(--primary-soft)' : 'var(--surface)',
                             color: isSelected ? 'var(--primary)' : 'var(--text-secondary)',
                             transition: 'all 0.2s',
                             opacity: isAllMode ? 0.6 : 1
@@ -882,10 +933,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
             </div>
             {activeQuiz.questions.map((q, idx) => (
               <div key={q.id} style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', position: 'relative', marginBottom: 20}}>
-                <button onClick={() => setActiveQuiz(p => ({ ...p, questions: p.questions.filter(qu => qu.id !== q.id) }))} style={{position: 'absolute', top: 20, right: 20, background: 'rgba(231, 76, 60, 0.1)', border: 'none', borderRadius: 8, width: 32, height: 32, color: '#E74C3C'}}><Trash2 size={16} /></button>
+                <button onClick={() => setActiveQuiz(p => ({ ...p, questions: p.questions.filter(qu => qu.id !== q.id) }))} style={{position: 'absolute', top: 20, right: 20, background: 'var(--incorrect-soft)', border: 'none', borderRadius: 8, width: 32, height: 32, color: 'var(--incorrect)'}}><Trash2 size={16} /></button>
                 <div style={{display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20}}>
                   <span style={{background: 'var(--primary)', color: 'white', width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 800}}>{idx + 1}</span>
-                  <span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>{q.type === 'short' ? '주관식' : '객관식'}</span>
+                  <span style={{fontSize: 14, fontWeight: 800, color: 'var(--primary)'}}>{q.type === 'short' ? '주관식' : q.type === 'multiple-multi' ? '객관식 · 복수정답' : '객관식 · 단일정답'}</span>
                   <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8}}>
                     <label style={{fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)'}}>난이도</label>
                     <select 
@@ -903,23 +954,28 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                   <input type="text" placeholder="질문" value={q.title} onChange={(e) => updateQuestion(q.id, {title: e.target.value})} style={{width: '100%', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, fontWeight: 600}}/>
                   {q.type !== 'short' && (
                     <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
-                      <div style={{fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)'}}>객관식 보기 설정 (체크박스를 선택하면 정답으로 지정됩니다)</div>
+                      <div style={{fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)'}}>{q.type === 'multiple-multi' ? '보기 설정 — 정답을 여러 개 체크할 수 있습니다' : '보기 설정 — 정답 보기 하나를 체크하세요'}</div>
                       {q.options?.map((opt, oIdx) => {
                         const isCorrect = q.correctAnswers?.includes(oIdx.toString());
                         return (
                           <div key={oIdx} style={{display: 'flex', alignItems: 'center', gap: 10}}>
                             <input
-                              type="checkbox"
+                              type={q.type === 'multiple-multi' ? 'checkbox' : 'radio'}
+                              name={`correct-${q.id}`}
                               checked={isCorrect}
                               onChange={(e) => {
                                 const checked = e.target.checked;
+                                const key = oIdx.toString();
+                                // 단일정답 문항은 하나만 정답으로 유지한다
+                                if (q.type !== 'multiple-multi') {
+                                  updateQuestion(q.id, { correctAnswers: checked ? [key] : [] });
+                                  return;
+                                }
                                 let updatedCorrects = [...(q.correctAnswers || [])];
                                 if (checked) {
-                                  if (!updatedCorrects.includes(oIdx.toString())) {
-                                    updatedCorrects.push(oIdx.toString());
-                                  }
+                                  if (!updatedCorrects.includes(key)) updatedCorrects.push(key);
                                 } else {
-                                  updatedCorrects = updatedCorrects.filter(c => c !== oIdx.toString());
+                                  updatedCorrects = updatedCorrects.filter(c => c !== key);
                                 }
                                 updateQuestion(q.id, { correctAnswers: updatedCorrects });
                               }}
@@ -947,7 +1003,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                     .map(c => c > oIdx ? (c - 1).toString() : c.toString());
                                   updateQuestion(q.id, { options: newOpts, correctAnswers: newCorrects });
                                 }}
-                                style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer', fontSize: 13, fontWeight: 600}}
+                                style={{background: 'transparent', border: 'none', color: 'var(--incorrect)', cursor: 'pointer', fontSize: 13, fontWeight: 600}}
                               >
                                 삭제
                               </button>
@@ -985,7 +1041,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                         disabled={aiPreviews[q.id]?.loading}
                         style={{
                           alignSelf: 'flex-start',
-                          background: 'rgba(49, 130, 246, 0.1)',
+                          background: 'var(--primary-soft)',
                           color: 'var(--primary)',
                           border: 'none',
                           padding: '10px 16px',
@@ -1012,7 +1068,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                       {aiPreviews[q.id] && !aiPreviews[q.id].loading && (
                         <div style={{background: 'var(--bg-color)', padding: 16, borderRadius: 16, border: '1px solid var(--border)', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 12}}>
                           {aiPreviews[q.id].error ? (
-                            <div style={{color: '#E74C3C', fontWeight: 600}}>{aiPreviews[q.id].error}</div>
+                            <div style={{color: 'var(--incorrect)', fontWeight: 600}}>{aiPreviews[q.id].error}</div>
                           ) : (
                             <>
                               <div>
@@ -1037,7 +1093,8 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               </div>
             ))}
             <div style={{display: 'flex', gap: 8, marginBottom: 100}}>
-              <button onClick={() => addQuestion('multiple')} className="btn btn-secondary">+ 객관식</button>
+              <button onClick={() => addQuestion('multiple')} className="btn btn-secondary">+ 객관식(단일)</button>
+              <button onClick={() => addQuestion('multiple-multi')} className="btn btn-secondary">+ 객관식(복수정답)</button>
               <button onClick={() => addQuestion('short')} className="btn btn-secondary">+ 주관식</button>
             </div>
           </div>
@@ -1050,7 +1107,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
                 <input type="text" placeholder="학번 (ID)" value={newStudent.id} onChange={(e) => setNewStudent({...newStudent, id: e.target.value})} style={{flex: '1 1 200px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
                 <input type="text" placeholder="이름" value={newStudent.name} onChange={(e) => setNewStudent({...newStudent, name: e.target.value})} style={{flex: '1 1 150px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
-                <button onClick={handleAddStudent} disabled={loading} className="btn btn-primary" style={{flex: '0 0 auto', minWidth: 120, padding: '0 28px', borderRadius: 12, fontWeight: 700, fontSize: 15, height: 48, boxShadow: '0 4px 12px rgba(49, 130, 246, 0.2)'}}>팀원 등록</button>
+                <button onClick={handleAddStudent} disabled={loading} className="btn btn-primary" style={{flex: '0 0 auto', minWidth: 120, padding: '0 28px', borderRadius: 12, fontWeight: 700, fontSize: 15, height: 48, boxShadow: '0 4px 12px var(--primary-soft-strong)'}}>팀원 등록</button>
               </div>
             </div>
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)'}}>
@@ -1058,7 +1115,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
               {dynamicTeam.map(student => (
                 <div key={student.id} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-color)', borderRadius: 12, marginBottom: 8}}>
                   <div><span style={{fontWeight: 700, marginRight: 12}}>{student.name}</span><span style={{fontSize: 13, color: 'var(--text-secondary)'}}>{student.id}</span></div>
-                  <button onClick={() => handleDeleteStudent(student.id)} style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer'}}><Trash2 size={18} /></button>
+                  <button onClick={() => handleDeleteStudent(student.id)} style={{background: 'transparent', border: 'none', color: 'var(--incorrect)', cursor: 'pointer'}}><Trash2 size={18} /></button>
                 </div>
               ))}
             </div>
@@ -1109,7 +1166,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                               setLoading(false);
                             }
                           }} 
-                          style={{background: 'transparent', border: 'none', color: '#E74C3C', cursor: 'pointer', padding: 4}}
+                          style={{background: 'transparent', border: 'none', color: 'var(--incorrect)', cursor: 'pointer', padding: 4}}
                         >
                           <Trash2 size={16} />
                         </button>

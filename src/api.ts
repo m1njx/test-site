@@ -4,9 +4,51 @@ import type { Quiz } from './data';
 
 import { ADMIN_ID } from './team';
 
-// In-memory DB for when Firebase is not configured yet
-const MOCK_DB: any = {
-  progress: []
+/**
+ * Firebase 미설정(=isMock) 시 사용하는 로컬 저장소.
+ *
+ * 예전에는 쓰기 함수들이 조용히 no-op 이라, 관리자 화면에서 "저장 성공!" 을 띄워도
+ * 실제로는 아무것도 남지 않았다. Firebase 없이 개발/데모하려면 실제로 저장돼야 하므로
+ * localStorage 에 보관한다. (새로고침해도 유지)
+ */
+const MOCK_KEYS = {
+  progress: 'aim_mock_progress',
+  quizzes: 'aim_mock_quizzes',
+  students: 'aim_mock_students',
+  announcements: 'aim_mock_announcements',
+};
+
+function mockRead<T>(key: string): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+function mockWrite<T>(key: string, rows: T[]) {
+  try {
+    localStorage.setItem(key, JSON.stringify(rows));
+  } catch (e) {
+    console.warn('mock 저장 실패(용량 초과 등):', e);
+  }
+}
+/** id 기준 upsert */
+function mockUpsert<T extends Record<string, any>>(key: string, row: T, idField = 'id') {
+  const rows = mockRead<T>(key);
+  const i = rows.findIndex((r) => r[idField] === row[idField]);
+  if (i >= 0) rows[i] = row;
+  else rows.push(row);
+  mockWrite(key, rows);
+}
+
+const MOCK_DB = {
+  get progress(): Progress[] {
+    return mockRead<Progress>(MOCK_KEYS.progress);
+  },
+  set progress(rows: Progress[]) {
+    mockWrite(MOCK_KEYS.progress, rows);
+  },
 };
 
 export interface Progress {
@@ -56,24 +98,29 @@ export async function saveScore(studentId: string, quizId: string, score: number
       .filter(([_, v]) => v !== undefined)
   ) : undefined;
   
-  const data: Progress = { 
-    studentId, 
-    quizId, 
-    score, 
-    total, 
-    timestamp: Date.now(), 
-    detailedResults: Object.keys(cleanedResults || {}).length > 0 ? cleanedResults : undefined
+  const data: Progress = {
+    studentId,
+    quizId,
+    score,
+    total,
+    timestamp: Date.now(),
   };
-  
+  // Firestore는 undefined 필드를 거부하므로 값이 있을 때만 추가
+  if (cleanedResults && Object.keys(cleanedResults).length > 0) {
+    data.detailedResults = cleanedResults;
+  }
+
   try {
     if (isMock) {
-      const idx = MOCK_DB.progress.findIndex((p: any) => p.studentId === studentId && p.quizId === quizId);
-      const existing = idx >= 0 ? MOCK_DB.progress[idx] : null;
+      const rows = MOCK_DB.progress;
+      const idx = rows.findIndex((p) => p.studentId === studentId && p.quizId === quizId);
+      const existing = idx >= 0 ? rows[idx] : null;
       data.attempts = existing ? (existing.attempts || 1) + 1 : 1;
       data.bestScore = existing ? Math.max(existing.bestScore || existing.score || 0, score) : score;
-      
-      if (idx >= 0) MOCK_DB.progress[idx] = data;
-      else MOCK_DB.progress.push(data);
+
+      if (idx >= 0) rows[idx] = data;
+      else rows.push(data);
+      MOCK_DB.progress = rows;
       return;
     }
     
@@ -110,7 +157,7 @@ export async function getStudentProgress(studentId: string): Promise<Progress[]>
 
   try {
     if (isMock) {
-      return [...MOCK_DB.progress.filter((p: any) => p.studentId === studentId)];
+      return MOCK_DB.progress.filter((p) => p.studentId === studentId);
     }
     
     if (!db) return [];
@@ -130,8 +177,8 @@ export async function getStudentProgress(studentId: string): Promise<Progress[]>
 export async function getAllProgress(): Promise<Progress[]> {
   try {
     if (isMock) {
-      const stored = localStorage.getItem('aim_progress');
-      return stored ? JSON.parse(stored) : [];
+      // saveScore가 기록하는 것과 동일한 저장소를 읽어야 함
+      return [...MOCK_DB.progress].sort((a: Progress, b: Progress) => b.timestamp - a.timestamp);
     }
     const q = query(collection(db, "progress"), orderBy("timestamp", "desc"));
     const snapshot = await getDocs(q);
@@ -152,7 +199,7 @@ export async function getQuizResults(quizId: string): Promise<Progress[]> {
 
   try {
     if (isMock) {
-      return [...MOCK_DB.progress.filter((p: any) => p.quizId === quizId)];
+      return MOCK_DB.progress.filter((p) => p.quizId === quizId);
     }
     
     if (!db) return [];
@@ -170,7 +217,9 @@ export async function getQuizResults(quizId: string): Promise<Progress[]> {
 
 export async function getQuizzes(): Promise<Quiz[]> {
   try {
-    if (isMock) return [];
+    if (isMock) {
+      return mockRead<Quiz>(MOCK_KEYS.quizzes).sort((a, b) => b.date.localeCompare(a.date));
+    }
     if (!db) return [];
     
     const snap = await getDocs(collection(db, 'quizzes'));
@@ -183,7 +232,7 @@ export async function getQuizzes(): Promise<Quiz[]> {
 }
 
 export async function saveQuiz(quiz: Quiz) {
-  if (isMock) return;
+  if (isMock) { mockUpsert(MOCK_KEYS.quizzes, quiz); return; }
   if (!db) return;
   
   try {
@@ -212,7 +261,13 @@ export async function saveQuiz(quiz: Quiz) {
     if (quiz.visibleTo && quiz.visibleTo.length > 0) {
       cleanedQuiz.visibleTo = quiz.visibleTo;
     }
-    
+
+    // 모니터링 수준 (미설정 시 'log' 기본값)
+    cleanedQuiz.proctoring = quiz.proctoring || 'log';
+
+    // 남은 최상위 undefined 값 제거 (Firestore는 undefined 저장 불가)
+    Object.keys(cleanedQuiz).forEach((k) => cleanedQuiz[k] === undefined && delete cleanedQuiz[k]);
+
     const docRef = doc(db, 'quizzes', quiz.id);
     await setDoc(docRef, cleanedQuiz);
   } catch (error) {
@@ -222,7 +277,10 @@ export async function saveQuiz(quiz: Quiz) {
 }
 
 export async function deleteQuiz(quizId: string) {
-  if (isMock) return;
+  if (isMock) {
+    mockWrite(MOCK_KEYS.quizzes, mockRead<Quiz>(MOCK_KEYS.quizzes).filter((q) => q.id !== quizId));
+    return;
+  }
   if (!db) return;
   
   try {
@@ -236,7 +294,7 @@ export async function deleteQuiz(quizId: string) {
 
 export async function getStudents(): Promise<any[]> {
   try {
-    if (isMock) return [];
+    if (isMock) return mockRead<any>(MOCK_KEYS.students);
     if (!db) return [];
     const snap = await getDocs(collection(db, 'students'));
     return snap.docs.map(d => d.data());
@@ -252,7 +310,9 @@ export async function verifyStudent(studentId: string): Promise<any | null> {
     return { id: ADMIN_ID, name: "강민제" };
   }
   try {
-    if (isMock) return null;
+    if (isMock) {
+      return mockRead<any>(MOCK_KEYS.students).find((s) => s.id === studentId) || null;
+    }
     if (!db) return null;
     const docRef = doc(db, 'students', studentId);
     const docSnap = await getDoc(docRef);
@@ -267,7 +327,7 @@ export async function verifyStudent(studentId: string): Promise<any | null> {
 }
 
 export async function saveStudent(student: { id: string, name: string }) {
-  if (isMock) return;
+  if (isMock) { mockUpsert(MOCK_KEYS.students, student); return; }
   if (!db) return;
   try {
     const docRef = doc(db, 'students', student.id);
@@ -279,7 +339,10 @@ export async function saveStudent(student: { id: string, name: string }) {
 }
 
 export async function deleteStudent(id: string) {
-  if (isMock) return;
+  if (isMock) {
+    mockWrite(MOCK_KEYS.students, mockRead<any>(MOCK_KEYS.students).filter((s) => s.id !== id));
+    return;
+  }
   if (!db) return;
   try {
     const docRef = doc(db, 'students', id);
@@ -292,7 +355,9 @@ export async function deleteStudent(id: string) {
 
 export async function getAnnouncements(): Promise<{id: string, text: string, date: number}[]> {
   try {
-    if (isMock) return [];
+    if (isMock) {
+      return mockRead<any>(MOCK_KEYS.announcements).sort((a, b) => b.date - a.date);
+    }
     const q = query(collection(db, "announcements"), orderBy("date", "desc"));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
@@ -303,12 +368,18 @@ export async function getAnnouncements(): Promise<{id: string, text: string, dat
 }
 
 export async function saveAnnouncement(text: string) {
-  if (isMock) return;
+  if (isMock) {
+    mockUpsert(MOCK_KEYS.announcements, { id: `ann-${Date.now()}`, text, date: Date.now() });
+    return;
+  }
   const newRef = doc(collection(db, 'announcements'));
   await setDoc(newRef, { text, date: Date.now() });
 }
 
 export async function deleteAnnouncement(id: string) {
-  if (isMock) return;
+  if (isMock) {
+    mockWrite(MOCK_KEYS.announcements, mockRead<any>(MOCK_KEYS.announcements).filter((a) => a.id !== id));
+    return;
+  }
   await deleteDoc(doc(db, 'announcements', id));
 }

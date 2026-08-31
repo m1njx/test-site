@@ -1,24 +1,39 @@
 /* Toss Style Refinements */
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
 
-/* Forced Bright Theme for a clean, premium look */
+/* Warm Wood + Pastel Theme */
 :root {
-  --primary: #3182F6;
-  --primary-hover: #1b64da;
-  --bg-color: #F9FAFB; /* Cleaner, lighter gray */
-  --surface: #FFFFFF;
-  --text-primary: #191F28;
-  --text-secondary: #4E5968; /* Slightly darker than before for better readability */
-  --text-tertiary: #8B95A1;
-  --border: #E5E8EB;
-  --correct: #27AE60;
-  --incorrect: #E74C3C;
+  --primary: #A9714B;          /* warm oak / caramel */
+  --primary-hover: #8C5A38;
+  --bg-color: #F4EEE3;         /* warm oat paper */
+  --surface: #FFFDF8;          /* creamy card */
+  --text-primary: #3B2F25;     /* roasted brown */
+  --text-secondary: #6E5C4A;   /* coffee */
+  --text-tertiary: #A08D78;    /* taupe */
+  --border: #E7DCC9;           /* soft sand */
+  --correct: #7A9E5B;          /* pastel sage */
+  --incorrect: #C56B54;        /* dusty terracotta */
+  --warn: #D19A4E;             /* honey amber */
+
+  /* Soft tints (theme-aware) */
+  --primary-soft: rgba(169, 113, 75, 0.12);
+  --primary-soft-strong: rgba(169, 113, 75, 0.22);
+  --correct-soft: rgba(122, 158, 91, 0.15);
+  --incorrect-soft: rgba(197, 107, 84, 0.12);
+  --warn-soft: rgba(209, 154, 78, 0.15);
+  --muted-soft: rgba(160, 141, 120, 0.14);
+
+  /* Pastel accents */
+  --accent-lav: #A99BC4;
+  --accent-sky: #8FB3C9;
+  --accent-blush: #DDA79C;
+
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 12px;
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 2px 10px rgba(74, 54, 38, 0.06);
+  --shadow-md: 0 10px 28px rgba(74, 54, 38, 0.10);
+  --shadow-lg: 0 18px 48px rgba(74, 54, 38, 0.14);
 }
 
 * {
@@ -94,7 +109,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
 }
 
 .level-badge {
-  background: rgba(49, 130, 246, 0.08);
+  background: var(--primary-soft);
   color: var(--primary);
   padding: 4px 10px;
   border-radius: 8px;
@@ -142,7 +157,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
   outline: none;
   border-color: var(--primary);
   background: var(--surface);
-  box-shadow: 0 0 0 4px rgba(49, 130, 246, 0.15);
+  box-shadow: 0 0 0 4px var(--primary-soft-strong);
 }
 
 .options-list {
@@ -177,7 +192,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
 
 .option-btn.selected {
   border-color: var(--primary);
-  background: rgba(49, 130, 246, 0.05);
+  background: var(--primary-soft);
 }
 
 .option-indicator {
@@ -265,7 +280,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
 .result-header {
   padding: 48px 24px 32px;
   text-align: center;
-  background: linear-gradient(to bottom, rgba(49, 130, 246, 0.03), transparent);
+  background: linear-gradient(to bottom, var(--primary-soft), transparent);
 }
 
 .result-title {
@@ -287,7 +302,7 @@ h1, h2, h3 { letter-spacing: -0.5px; }
   margin: 0 auto;
   font-size: 44px;
   font-weight: 800;
-  box-shadow: 0 16px 32px rgba(49, 130, 246, 0.25);
+  box-shadow: 0 16px 32px var(--primary-soft-strong);
   animation: popIn 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 
@@ -502,19 +517,30 @@ h1, h2, h3 { letter-spacing: -0.5px; }
   }
 }
 
-/* Dark Mode */
+/* Dark Mode — warm espresso */
 body.dark {
-  --primary: #4F95FF;
-  --primary-hover: #3182F6;
-  --bg-color: #121212;
-  --surface: #1E1E1E;
-  --text-primary: #F9FAFB;
-  --text-secondary: #B0B8C1;
-  --text-tertiary: #8B95A1;
-  --border: #333333;
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --primary: #D6A074;          /* lifted caramel */
+  --primary-hover: #E6B488;
+  --bg-color: #1E1712;         /* espresso */
+  --surface: #2A221C;          /* warm charcoal card */
+  --text-primary: #F1E6D6;
+  --text-secondary: #C6B5A0;
+  --text-tertiary: #94826D;
+  --border: #3E352C;
+  --correct: #96B978;
+  --incorrect: #DB8E77;
+  --warn: #E0AC64;
+
+  --primary-soft: rgba(214, 160, 116, 0.16);
+  --primary-soft-strong: rgba(214, 160, 116, 0.28);
+  --correct-soft: rgba(150, 185, 120, 0.18);
+  --incorrect-soft: rgba(219, 142, 119, 0.18);
+  --warn-soft: rgba(224, 172, 100, 0.18);
+  --muted-soft: rgba(148, 130, 109, 0.20);
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.75);
 }
 
 body.dark .short-input,
@@ -526,11 +552,11 @@ body.dark .quiz-card {
 
 body.dark .option-btn:hover,
 body.dark .quiz-card:hover {
-  background: #2A2A2A;
+  background: #35302A;
 }
 
 body.dark .option-btn.selected {
-  background: rgba(79, 149, 255, 0.1);
+  background: var(--primary-soft);
   border-color: var(--primary);
 }
 
@@ -587,4 +613,76 @@ body.dark .lms-card { background: var(--surface); }
   background: var(--bg-color);
   padding: 4px;
   border-radius: 12px;
+}
+
+/* ===== 접근성 / 공통 ===== */
+
+/* 키보드 사용자에게만 포커스 링을 보여준다 (마우스 클릭 시엔 숨김) */
+:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* 인라인 style 로 outline:none 을 준 입력들에도 포커스가 보이도록 보강 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--primary) !important;
+}
+
+/* 폼 요소가 테마 색을 따르도록 (다크모드에서 흰 배경으로 튀는 것 방지) */
+input, textarea, select, button {
+  color: inherit;
+  font: inherit;
+}
+input, textarea, select {
+  background-color: var(--surface);
+  color: var(--text-primary);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--text-tertiary);
+}
+/* 체크박스/라디오/진행바 등 네이티브 위젯 색상 */
+input[type="checkbox"], input[type="radio"], progress {
+  accent-color: var(--primary);
+}
+/* 날짜 입력의 달력 아이콘이 다크모드에서 안 보이는 문제 */
+body.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) opacity(0.7);
+}
+
+/* 스크롤바도 테마에 맞춤 */
+* {
+  scrollbar-color: var(--border) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* 모션 최소화 설정 존중 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 긴 한글 제목이 레이아웃을 밀어내지 않도록 */
+.home-title, .quiz-name, h1, h2, h3 {
+  overflow-wrap: anywhere;
 }

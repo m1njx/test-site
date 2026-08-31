@@ -72,10 +72,16 @@ export default function VideoPlayer({
     resumed: false,
   });
 
+  // 토스트 타이머는 ref 로 관리한다 (함수 자신에 프로퍼티를 다는 방식은
+  // 선언 전 자기 참조라 취약하고, 언마운트 시 타이머가 남는다)
+  const toastTimer = useRef<number | null>(null);
   const showToast = useCallback((msg: string) => {
     setToast(msg);
-    window.clearTimeout((showToast as any)._t);
-    (showToast as any)._t = window.setTimeout(() => setToast(null), 2600);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600) as unknown as number;
+  }, []);
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
   }, []);
 
   const recompute = useCallback(() => {

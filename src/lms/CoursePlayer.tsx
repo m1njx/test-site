@@ -6,6 +6,8 @@ import {
   PlayCircle,
   FileQuestion,
   GraduationCap,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import type { Course, Lesson, LessonProgress, QuizLesson } from './types';
 import { flattenLessons } from './types';
@@ -69,10 +71,15 @@ export default function CoursePlayer({
   }, [flat, lessonProgress]);
 
   const [selectedIdx, setSelectedIdx] = useState(firstOpenIdx);
-  const current = flat[selectedIdx];
+  // 레슨 수가 바뀌어(코스 편집 등) 인덱스가 범위를 벗어나면 보정
+  const safeIdx = Math.min(selectedIdx, Math.max(0, flat.length - 1));
+  const current = flat[safeIdx];
 
   const doneCount = flat.filter(({ lesson }) => isDone(lesson.id)).length;
   const finished = flat.length > 0 && doneCount === flat.length;
+
+  const nextLesson = flat[safeIdx + 1];
+  const nextUnlocked = !!nextLesson && safeIdx + 1 < unlockedUntil;
 
   const renderLessonBody = (lesson: Lesson) => {
     if (lesson.kind === 'video') {
@@ -189,7 +196,7 @@ export default function CoursePlayer({
                     const gIdx = flat.findIndex((f) => f.lesson.id === lesson.id);
                     const locked = gIdx >= unlockedUntil;
                     const done = isDone(lesson.id);
-                    const active = gIdx === selectedIdx;
+                    const active = gIdx === safeIdx;
                     return (
                       <button
                         key={lesson.id}
@@ -204,7 +211,7 @@ export default function CoursePlayer({
                           padding: '10px 12px',
                           borderRadius: 10,
                           border: active ? '1px solid var(--primary)' : '1px solid transparent',
-                          background: active ? 'rgba(49,130,246,0.08)' : 'transparent',
+                          background: active ? 'var(--primary-soft)' : 'transparent',
                           color: locked ? 'var(--text-tertiary)' : 'var(--text-primary)',
                           cursor: locked ? 'not-allowed' : 'pointer',
                           fontSize: 13,
@@ -235,12 +242,48 @@ export default function CoursePlayer({
           {current ? (
             <>
               <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 14px' }}>{current.lesson.title}</h2>
-              {selectedIdx >= unlockedUntil ? (
+              {safeIdx >= unlockedUntil ? (
                 <div style={{ padding: 24, background: 'var(--bg-color)', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, color: 'var(--text-secondary)', fontSize: 14 }}>
                   <Lock size={18} /> 이전 레슨을 먼저 완료해야 열람할 수 있습니다.
                 </div>
               ) : (
                 renderLessonBody(current.lesson)
+              )}
+
+              {/* 레슨 사이 이동 — 완료 후 다음으로 이어가기 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 24, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-secondary"
+                  disabled={selectedIdx === 0}
+                  onClick={() => setSelectedIdx((i) => Math.max(0, i - 1))}
+                  style={{ flex: 'none' }}
+                >
+                  <ChevronLeft size={16} /> 이전 레슨
+                </button>
+
+                {nextLesson && (
+                  <button
+                    className={nextUnlocked ? 'btn btn-primary' : 'btn btn-secondary'}
+                    disabled={!nextUnlocked}
+                    onClick={() => setSelectedIdx((i) => i + 1)}
+                    style={{ flex: 'none', marginLeft: 'auto' }}
+                    title={nextUnlocked ? undefined : '현재 레슨을 완료해야 열립니다'}
+                  >
+                    {nextUnlocked ? <>다음 레슨 <ChevronRight size={16} /></> : <><Lock size={14} /> 다음 레슨 잠김</>}
+                  </button>
+                )}
+
+                {!nextLesson && finished && (
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, color: 'var(--correct)', fontWeight: 800, fontSize: 14 }}>
+                    <GraduationCap size={18} /> 모든 레슨을 완료했습니다
+                  </div>
+                )}
+              </div>
+
+              {isDone(current.lesson.id) && nextLesson && nextUnlocked && (
+                <div style={{ marginTop: 10, fontSize: 13, color: 'var(--correct)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle2 size={15} /> 이 레슨을 완료했습니다 — 다음 레슨으로 넘어가세요.
+                </div>
               )}
             </>
           ) : (

@@ -271,29 +271,38 @@ export async function createProctorSession(
   return session.id;
 }
 
-export async function appendProctorEvents(sessionId: string, events: ProctorEvent[]): Promise<void> {
+/** 한 세션에 보관할 최대 이벤트 수 (Firestore 문서 1MB 한도 보호) */
+export const MAX_PROCTOR_EVENTS = 400;
+
+export async function appendProctorEvents(
+  sessionId: string,
+  events: ProctorEvent[],
+  flagScore?: number,
+): Promise<void> {
   if (events.length === 0) return;
   if (isMock || !db) {
     const all = lsGet<ProctorSession>(LS.proctor);
     const s = all.find((x) => x.id === sessionId);
     if (s) {
       s.events.push(...events);
-      s.flagScore = computeFlagScore(s.events);
+      if (s.events.length > MAX_PROCTOR_EVENTS) {
+        s.events = s.events.slice(-MAX_PROCTOR_EVENTS);
+      }
+      s.flagScore = flagScore ?? computeFlagScore(s.events);
       s.flagged = s.flagScore >= PROCTOR_FLAG_THRESHOLD;
       lsSet(LS.proctor, all);
     }
     return;
   }
   try {
-    const dref = doc(db, 'proctorSessions', sessionId);
-    await updateDoc(dref, { events: arrayUnion(...events.map((e) => stripUndefined(e))) });
-    // flagScore 는 스냅샷 다시 읽어 재계산
-    const snap = await getDoc(dref);
-    if (snap.exists()) {
-      const all = (snap.data() as ProctorSession).events || [];
-      const flagScore = computeFlagScore(all);
-      await updateDoc(dref, { flagScore, flagged: flagScore >= PROCTOR_FLAG_THRESHOLD });
-    }
+    // flagScore 는 호출자(useProctor)가 로컬 누적으로 계산해 넘겨준다.
+    // 덕분에 3초마다 읽기 1 + 쓰기 2 대신 쓰기 1회만 발생한다.
+    const score = flagScore ?? 0;
+    await updateDoc(doc(db, 'proctorSessions', sessionId), {
+      events: arrayUnion(...events.map((e) => stripUndefined(e))),
+      flagScore: score,
+      flagged: score >= PROCTOR_FLAG_THRESHOLD,
+    });
   } catch (e) {
     console.error('appendProctorEvents error:', e);
   }
@@ -348,8 +357,19 @@ export async function uploadCourseVideo(
       '비디오 서버가 설정되지 않았습니다. .env 의 VITE_VIDEO_SERVER_URL 을 지정하거나 YouTube 링크를 사용하세요.',
     );
   }
+  // 업로드 크기/형식은 서버에서도 다시 검증하지만, 여기서 먼저 걸러 헛된 업로드를 막는다
+  if (!/^video\//.test(file.type)) {
+    throw new Error('영상 파일만 업로드할 수 있습니다.');
+  }
+  const MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+  if (file.size > MAX_BYTES) {
+    throw new Error('파일이 너무 큽니다. (최대 2GB)');
+  }
+
   const durationSec = await readVideoDuration(file).catch(() => undefined);
-  const token = import.meta.env.VITE_ADMIN_PASSWORD || '';
+  // 관리자 비밀번호를 그대로 쓰지 않는다 — 이 토큰은 번들에 포함되어 공개되므로
+  // 비밀번호와 반드시 분리해야 한다. (video-server/README.md 참고)
+  const token = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
 
   return new Promise((resolve, reject) => {
     const form = new FormData();

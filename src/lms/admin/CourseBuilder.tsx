@@ -246,7 +246,7 @@ export default function CourseBuilder({ quizzes, team }: Props) {
               cursor: 'pointer',
               fontWeight: 700,
               fontSize: 14,
-              background: editing.isPublished ? 'rgba(39,174,96,0.1)' : 'rgba(139,149,161,0.1)',
+              background: editing.isPublished ? 'var(--correct-soft)' : 'var(--muted-soft)',
               color: editing.isPublished ? 'var(--correct)' : 'var(--text-secondary)',
             }}
           >
@@ -318,7 +318,7 @@ export default function CourseBuilder({ quizzes, team }: Props) {
                     fontSize: 13,
                     fontWeight: 600,
                     cursor: 'pointer',
-                    background: sel ? 'rgba(49,130,246,0.1)' : 'var(--surface)',
+                    background: sel ? 'var(--primary-soft)' : 'var(--surface)',
                     color: sel ? 'var(--primary)' : 'var(--text-secondary)',
                     opacity: allSelected ? 0.5 : 1,
                   }}
@@ -565,7 +565,7 @@ const pill = (active: boolean): React.CSSProperties => ({
   padding: '5px 10px',
   borderRadius: 8,
   border: active ? '1px solid var(--primary)' : '1px solid var(--border)',
-  background: active ? 'rgba(49,130,246,0.1)' : 'var(--surface)',
+  background: active ? 'var(--primary-soft)' : 'var(--surface)',
   color: active ? 'var(--primary)' : 'var(--text-secondary)',
   fontSize: 12,
   fontWeight: 700,

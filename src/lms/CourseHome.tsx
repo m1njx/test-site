@@ -79,7 +79,7 @@ export default function CourseHome({ courses, lessonProgress, studentId, onSelec
                 display: 'flex',
                 alignItems: 'center',
                 gap: 16,
-                border: finished ? '1px solid rgba(39,174,96,0.4)' : '1px solid var(--border)',
+                border: finished ? '1px solid var(--correct)' : '1px solid var(--border)',
               }}
             >
               <Ring pct={pct} done={finished} />

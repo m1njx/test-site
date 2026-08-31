@@ -56,12 +56,16 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
   const buffer = useRef<ProctorEvent[]>([]);
   const allEvents = useRef<ProctorEvent[]>([]);
   const flushTimer = useRef<number | null>(null);
+  const flagScoreRef = useRef(0);
+  /** quiz_start 를 세션당 한 번만 남기기 위한 표식 (StrictMode 재실행/재마운트 대비) */
+  const startedSessionRef = useRef<string | null>(null);
 
   const flush = useCallback(async () => {
     if (!sessionId || buffer.current.length === 0) return;
     const batch = buffer.current;
     buffer.current = [];
-    await appendProctorEvents(sessionId, batch);
+    // flagScore를 클라이언트에서 계산해 함께 보내면 Firestore 왕복 1회로 끝난다
+    await appendProctorEvents(sessionId, batch, flagScoreRef.current);
   }, [sessionId]);
 
   const record = useCallback(
@@ -70,6 +74,7 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
       buffer.current.push(ev);
       allEvents.current.push(ev);
       const flagScore = computeFlagScore(allEvents.current);
+      flagScoreRef.current = flagScore;
       setState((prev) => ({
         flagScore,
         flagged: flagScore >= PROCTOR_FLAG_THRESHOLD,
@@ -86,7 +91,22 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
   useEffect(() => {
     if (!enabled || !sessionId) return;
 
-    record('quiz_start');
+    const isNewSession = startedSessionRef.current !== sessionId;
+    if (isNewSession) {
+      // 새 응시 세션이므로 이전 세션의 누적 이벤트/점수를 비운다
+      startedSessionRef.current = sessionId;
+      buffer.current = [];
+      allEvents.current = [];
+      flagScoreRef.current = 0;
+      setState({
+        flagScore: 0,
+        flagged: false,
+        eventCount: 0,
+        fullscreenActive: isFullscreen(),
+        awayCount: 0,
+      });
+      record('quiz_start');
+    }
 
     const onVisibility = () =>
       record(document.hidden ? 'tab_hidden' : 'tab_visible');
@@ -104,14 +124,13 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
       e.preventDefault();
       record('contextmenu');
     };
+    // keydown: 개발자도구 / macOS 스크린샷 조합
+    // (PrintScreen 은 keydown 이 전달되지 않는 브라우저가 있어 keyup 에서만 처리한다.
+    //  두 리스너에 같은 핸들러를 달면 한 번의 입력이 두 번 집계되므로 반드시 분리할 것)
     const onKeyDown = (e: KeyboardEvent) => {
       const k = e.key;
       const ctrlish = e.ctrlKey || e.metaKey;
-      // PrintScreen (윈도우) — keyup 으로도 잡히므로 여기서 처리
-      if (k === 'PrintScreen') {
-        record('printscreen_key');
-        return;
-      }
+      if (k === 'PrintScreen') return; // keyup 에서 처리
       // 개발자도구: F12, Ctrl/Cmd+Shift+I/J/C, Ctrl+U
       if (
         k === 'F12' ||
@@ -126,6 +145,11 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
       if (e.metaKey && e.shiftKey && ['3', '4', '5'].includes(k)) {
         record('printscreen_key', `Cmd+Shift+${k}`);
       }
+    };
+
+    // keyup: PrintScreen 전용
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'PrintScreen') record('printscreen_key');
     };
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       record('reload_attempt');
@@ -145,7 +169,7 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
     document.addEventListener('cut', onCut);
     document.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('keyup', onKeyDown, true); // PrintScreen 대비
+    window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('beforeunload', onBeforeUnload);
 
     flushTimer.current = window.setInterval(flush, FLUSH_MS) as unknown as number;
@@ -161,7 +185,7 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
       document.removeEventListener('cut', onCut);
       document.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('keyup', onKeyDown, true);
+      window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('beforeunload', onBeforeUnload);
       if (flushTimer.current) window.clearInterval(flushTimer.current);
       flush();

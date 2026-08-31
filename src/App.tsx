@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp, Check, WifiOff } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
 import { ADMIN_ID, type Student } from './team';
 import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress, verifyStudent } from './api';
@@ -11,12 +11,33 @@ import CoursePlayer, { type QuizLessonContext } from './lms/CoursePlayer';
 import ProctorShell from './lms/ProctorShell';
 import type { Course, LessonProgress } from './lms/types';
 import { getCourses, getLessonProgress, markQuizLesson, createProctorSession, finishProctorSession } from './lms/lmsApi';
+import { verifyAdminPassword } from './auth';
 import './index.css';
 
 const genId = () =>
   typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+/**
+ * 저장된 답안을 사람이 읽을 수 있는 형태로.
+ * 객관식 답안은 보기 "인덱스"로 저장되므로, 그대로 보여주면
+ * 학생에게 "내 답변: 0, 2" 같은 의미 없는 숫자가 보인다.
+ */
+export function formatAnswer(
+  q: { type: string; options?: string[] } | undefined,
+  ans: string | string[] | undefined,
+): string {
+  if (ans === undefined || ans === null || (Array.isArray(ans) && ans.length === 0)) return '(없음)';
+  if (!q || q.type === 'short') return String(ans);
+  const idxs = Array.isArray(ans) ? ans : [ans];
+  return idxs
+    .map((i) => {
+      const opt = q.options?.[parseInt(String(i), 10)];
+      return opt !== undefined && opt !== '' ? opt : `보기 ${parseInt(String(i), 10) + 1}`;
+    })
+    .join(', ');
+}
 
 declare global {
   interface Window {
@@ -98,6 +119,7 @@ export default function App() {
   const [courseCtx, setCourseCtx] = useState<QuizLessonContext | null>(null);
   const [quizOrigin, setQuizOrigin] = useState<'home' | 'course'>('home');
   const [proctorSessionId, setProctorSessionId] = useState<string | null>(null);
+  const [proctorMode, setProctorMode] = useState<'log' | 'strict'>('log');
   const [dynamicTeam, setDynamicTeam] = useState<Student[]>([]);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
@@ -106,6 +128,8 @@ export default function App() {
   const [results, setResults] = useState<Record<string, any>>({});
   const [pyodide, setPyodide] = useState<any>(null);
   const [isGrading, setIsGrading] = useState(false);
+  const [gradingProgress, setGradingProgress] = useState<{done: number, total: number} | null>(null);
+  const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
   const [studentProgress, setStudentProgress] = useState<Progress[]>([]);
   const [expandedAnswers, setExpandedAnswers] = useState<Record<string, boolean>>({});
 
@@ -148,11 +172,15 @@ export default function App() {
     return () => clearInterval(timerId);
   }, [currentView, timeLeft, showResults, isGrading]);
 
+  // gradeQuiz 는 아래(early return 뒤)에서 선언되므로 직접 참조하면 TDZ 위험이 있다.
+  // ref 로 최신 구현을 넘겨받아 호출한다.
+  const gradeQuizRef = useRef<null | (() => Promise<void>)>(null);
+
   useEffect(() => {
     if (shouldAutoSubmit) {
       setShouldAutoSubmit(false);
       alert("제한 시간이 초과되었습니다. 자동으로 답안을 제출합니다.");
-      gradeQuiz();
+      gradeQuizRef.current?.();
     }
   }, [shouldAutoSubmit]);
 
@@ -208,44 +236,72 @@ export default function App() {
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [checkingPassword, setCheckingPassword] = useState(false);
 
   const enterAdmin = () => {
     setShowPasswordModal(true);
     setAdminPassword('');
+    setPasswordError('');
   };
 
-  const handlePasswordSubmit = (e?: React.FormEvent) => {
+  const handlePasswordSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    const correctPassword = import.meta.env.VITE_ADMIN_PASSWORD;
-    if (adminPassword === correctPassword && correctPassword) {
-      setShowPasswordModal(false);
-      loadTeam();
-      setCurrentView('admin');
-    } else {
-      alert("비밀번호가 틀렸습니다.");
-      setAdminPassword('');
+    if (checkingPassword) return;
+    setCheckingPassword(true);
+    setPasswordError('');
+    try {
+      const res = await verifyAdminPassword(adminPassword);
+      if (res.ok) {
+        setShowPasswordModal(false);
+        setAdminPassword('');
+        loadTeam();
+        setCurrentView('admin');
+      } else if (res.reason === 'locked') {
+        setPasswordError(`시도 횟수를 초과했습니다. ${Math.ceil(res.remainingMs / 60000)}분 후 다시 시도해주세요.`);
+        setAdminPassword('');
+      } else if (res.reason === 'unconfigured') {
+        setPasswordError('관리자 비밀번호가 설정되지 않았습니다. (.env 의 VITE_ADMIN_PASSWORD_HASH 확인)');
+      } else {
+        setPasswordError(`비밀번호가 틀렸습니다. (남은 시도 ${res.attemptsLeft}회)`);
+        setAdminPassword('');
+      }
+    } finally {
+      setCheckingPassword(false);
     }
   };
 
-  useEffect(() => {
-    let retryCount = 0;
-    const initPyodide = async () => {
-      try {
-        if (window.loadPyodide) {
-          const p = await window.loadPyodide({
-            indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/'
-          });
-          setPyodide(p);
-        } else {
-          if (retryCount < 20) {
-            retryCount++;
-            setTimeout(initPyodide, 500);
-          }
+  // Pyodide(수십 MB)는 주관식 채점 fallback 에만 쓰이므로 필요할 때 한 번만 받는다.
+  const pyodidePromise = useRef<Promise<any> | null>(null);
+  const ensurePyodide = useCallback(async (): Promise<any | null> => {
+    if (pyodide) return pyodide;
+    if (!pyodidePromise.current) {
+      pyodidePromise.current = (async () => {
+        // index.html 의 로더 스크립트가 아직 준비되지 않았을 수 있어 잠시 기다린다
+        for (let i = 0; i < 20 && !window.loadPyodide; i++) {
+          await new Promise((r) => setTimeout(r, 250));
         }
-      } catch (err) { console.error("Pyodide init error:", err); }
-    };
-    initPyodide();
-  }, []);
+        if (!window.loadPyodide) throw new Error('Pyodide loader unavailable');
+        return window.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/' });
+      })();
+    }
+    try {
+      const p = await pyodidePromise.current;
+      setPyodide(p);
+      return p;
+    } catch (err) {
+      console.error('Pyodide init error:', err);
+      pyodidePromise.current = null;
+      return null;
+    }
+  }, [pyodide]);
+
+  // 주관식이 포함된 퀴즈를 시작하면 미리 데워둔다 (제출 시 대기 시간 감소)
+  useEffect(() => {
+    if (currentView === 'quiz' && selectedQuiz?.questions.some(q => q.type === 'short')) {
+      ensurePyodide();
+    }
+  }, [currentView, selectedQuiz, ensurePyodide]);
 
   const fetchProgress = useCallback(async () => {
     if (loggedInUser && loggedInUser !== ADMIN_ID) {
@@ -259,6 +315,18 @@ export default function App() {
       fetchProgress();
     }
   }, [loggedInUser, currentView, fetchProgress]);
+
+  // 네트워크 끊김 감지 — 오프라인 상태에서는 저장/채점이 실패하므로 미리 알린다
+  useEffect(() => {
+    const on = () => setIsOffline(false);
+    const off = () => setIsOffline(true);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
 
   // 퀴즈 답안 자동 저장 (early-return 위에 있어야 Hook 순서가 안정적)
   useEffect(() => {
@@ -275,9 +343,17 @@ export default function App() {
     setCourseCtx(ctx ?? null);
     setQuizOrigin(ctx ? 'course' : 'home');
 
-    // 부정행위 모니터링 세션 (관리자 제외, 코스 레슨은 proctored 옵션 존중)
-    const proctored = loggedInUser !== ADMIN_ID && (ctx ? ctx.proctored : true);
-    if (proctored && loggedInUser) {
+    // 부정행위 모니터링 수준 결정
+    //  - 코스 퀴즈 레슨: ctx.proctored(boolean) → strict / off
+    //  - 단독 퀴즈: quiz.proctoring ('off' | 'log' | 'strict', 기본 'log')
+    //  - 관리자는 항상 off
+    const rawMode: 'off' | 'log' | 'strict' = ctx
+      ? (ctx.proctored ? 'strict' : 'off')
+      : (quiz.proctoring || 'log');
+    const mode: 'off' | 'log' | 'strict' = loggedInUser === ADMIN_ID ? 'off' : rawMode;
+    setProctorMode(mode === 'strict' ? 'strict' : 'log');
+
+    if (mode !== 'off' && loggedInUser) {
       try {
         const sid = await createProctorSession({
           id: genId(),
@@ -361,9 +437,13 @@ export default function App() {
     if (selectedQuiz && loggedInUser) {
       localStorage.removeItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`);
     }
-    // 재응시: 새 모니터링 세션 시작 (직전 응시가 모니터링 대상이었을 때)
-    const wasProctored = loggedInUser !== ADMIN_ID && (courseCtx ? courseCtx.proctored : true);
-    if (wasProctored && selectedQuiz && loggedInUser) {
+    // 재응시: 새 모니터링 세션 시작 (직전 응시와 동일한 수준)
+    const rawMode: 'off' | 'log' | 'strict' = courseCtx
+      ? (courseCtx.proctored ? 'strict' : 'off')
+      : (selectedQuiz?.proctoring || 'log');
+    const mode: 'off' | 'log' | 'strict' = loggedInUser === ADMIN_ID ? 'off' : rawMode;
+    setProctorMode(mode === 'strict' ? 'strict' : 'log');
+    if (mode !== 'off' && selectedQuiz && loggedInUser) {
       try {
         const sid = await createProctorSession({
           id: genId(),
@@ -381,18 +461,29 @@ export default function App() {
   };
 
   const gradeQuiz = async () => {
+    if (isGrading) return; // 자동 제출과 수동 제출이 겹쳐 두 번 채점되는 것 방지
     setIsGrading(true);
     const gradingResults: Record<string, boolean> = {};
     const fullResults: Record<string, any> = {};
     let correctCount = 0;
     const questions = selectedQuiz!.questions;
-    for (const q of questions) {
+    setGradingProgress({ done: 0, total: questions.length });
+
+    // 객관식은 즉시 로컬 채점하고, AI 호출이 필요한 부분만 병렬로 처리한다.
+    // (직렬 호출 시 문항 수 × 최대 15초까지 걸려 제출이 사실상 멈춘 것처럼 보였다)
+    let done = 0;
+    const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
+
+    const gradeOne = async (q: typeof questions[number]) => {
       const userAns = answers[q.id];
-      if (!userAns) { gradingResults[q.id] = false; continue; }
+      const isBlank = q.type === 'short'
+        ? !(typeof userAns === 'string' && userAns.trim())
+        : !(Array.isArray(userAns) && userAns.length > 0);
+      if (isBlank) { gradingResults[q.id] = false; bump(); return; }
+
       if (q.type === 'short') {
         const u = typeof userAns === 'string' ? userAns : '';
         let graded = false;
-        
         try {
           const geminiResult = await gradeWithGemini(q, u);
           gradingResults[q.id] = geminiResult.isCorrect;
@@ -403,37 +494,51 @@ export default function App() {
         } catch (e) {
           console.warn("Gemini grading failed, falling back to Pyodide:", e);
         }
-        
-        if (!graded && pyodide) {
-          try {
-            pyodide.runPython(`locals().clear()`);
-            if (q.setupCode) pyodide.runPython(q.setupCode);
-            let userRes = null;
-            try { userRes = pyodide.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
-            pyodide.globals.set('_user_result', userRes);
-            const isCorrect = pyodide.runPython(q.validationCode || 'False');
-            gradingResults[q.id] = isCorrect === true;
-          } catch (err) {
+
+        if (!graded) {
+          const py = pyodide || (await ensurePyodide());
+          if (py) {
+            try {
+              py.runPython(`locals().clear()`);
+              if (q.setupCode) py.runPython(q.setupCode);
+              let userRes = null;
+              try { userRes = py.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
+              py.globals.set('_user_result', userRes);
+              const isCorrect = py.runPython(q.validationCode || 'False');
+              gradingResults[q.id] = isCorrect === true;
+            } catch (err) {
+              gradingResults[q.id] = false;
+            }
+          } else {
+            // 채점 수단이 모두 실패 — 오답 처리 대신 사유를 남긴다
             gradingResults[q.id] = false;
+            fullResults[`reason_${q.id}`] = '자동 채점에 실패했습니다. 관리자에게 문의해주세요.';
           }
         }
       } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
-        const u = Array.isArray(userAns) ? userAns : [userAns];
-        const isCorrect = u.length === q.correctAnswers.length && [...u].sort().join(',') === [...q.correctAnswers].sort().join(',');
-        gradingResults[q.id] = isCorrect;
-        
+        const u = Array.isArray(userAns) ? userAns : [userAns as string];
+        const correct = q.correctAnswers || [];
+        gradingResults[q.id] =
+          u.length === correct.length &&
+          [...u].sort().join(',') === [...correct].sort().join(',');
+
         try {
           const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-          const correctTexts = q.correctAnswers.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+          const correctTexts = correct.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
           const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
           fullResults[`reason_${q.id}`] = geminiResult.reason;
           if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
         } catch (e) {
           console.warn("Gemini explanation failed for multiple-choice:", e);
         }
-      } else { gradingResults[q.id] = false; }
-      if (gradingResults[q.id]) correctCount++;
-    }
+      } else {
+        gradingResults[q.id] = false;
+      }
+      bump();
+    };
+
+    await Promise.all(questions.map(gradeOne));
+    correctCount = questions.reduce((n, q) => (gradingResults[q.id] ? n + 1 : n), 0);
 
     Object.assign(fullResults, gradingResults);
     questions.forEach(q => {
@@ -472,8 +577,10 @@ export default function App() {
     }
 
     setIsGrading(false);
+    setGradingProgress(null);
     setShowResults(true);
   };
+  gradeQuizRef.current = gradeQuiz;
 
   // Helper variables for Home view
   const visibleQuizzes = dynamicQuizzes.filter(q => {
@@ -492,11 +599,39 @@ export default function App() {
   const totalQuestions = questions.length;
   const progress = totalQuestions > 0 ? ((currentQuestionIdx + 1) / totalQuestions) * 100 : 0;
   const currentAnswer = currentQuestion ? answers[currentQuestion.id] : null;
+  const isMultiSelect = currentQuestion?.type === 'multiple-multi';
   const isAnswered = currentQuestion ? (currentQuestion.type === 'short' ? !!(currentAnswer && (currentAnswer as string).trim()) : (Array.isArray(currentAnswer) && currentAnswer.length > 0)) : false;
+  const answeredCount = questions.filter(q => {
+    const a = answers[q.id];
+    return q.type === 'short' ? !!(a && (a as string).trim()) : (Array.isArray(a) && a.length > 0);
+  }).length;
 
   return (
     <div className="app-container" style={{background: 'transparent', boxShadow: 'none'}}>
-      
+
+      {isOffline && (
+        <div role="status" style={{position: 'sticky', top: 0, zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 16px', background: 'var(--incorrect)', color: '#fff', fontSize: 13, fontWeight: 700}}>
+          <WifiOff size={16} /> 인터넷 연결이 끊겼습니다. 답안은 기기에 임시 저장되며, 연결 후 제출해주세요.
+        </div>
+      )}
+
+      {isGrading && (
+        <div style={{position: 'fixed', inset: 0, zIndex: 10001, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+          <div style={{background: 'var(--surface)', padding: 32, borderRadius: 24, textAlign: 'center', minWidth: 260, boxShadow: 'var(--shadow-lg)'}}>
+            <Loader2 className="animate-spin" size={32} color="var(--primary)" style={{margin: '0 auto 16px'}} />
+            <div style={{fontWeight: 800, fontSize: 17, marginBottom: 6}}>채점 중입니다</div>
+            <div style={{fontSize: 13, color: 'var(--text-secondary)'}}>
+              {gradingProgress ? `${gradingProgress.done} / ${gradingProgress.total} 문항 완료` : '잠시만 기다려주세요'}
+            </div>
+            {gradingProgress && gradingProgress.total > 0 && (
+              <div style={{height: 6, background: 'var(--bg-color)', borderRadius: 3, overflow: 'hidden', marginTop: 14}}>
+                <div style={{height: '100%', width: `${(gradingProgress.done / gradingProgress.total) * 100}%`, background: 'var(--primary)', transition: 'width 0.3s'}} />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {currentView === 'admin' && (
         <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} onRefresh={loadQuizzes} dynamicTeam={dynamicTeam} onRefreshTeam={loadTeam} />
       )}
@@ -572,7 +707,7 @@ export default function App() {
                                   <span>응시 횟수: {p.attempts || 1}회</span>
                                 </div>
                                 <div style={{height: 6, background: 'var(--surface)', borderRadius: 3, overflow: 'hidden'}}>
-                                  <div style={{height: '100%', background: rate >= 80 ? '#27AE60' : (rate >= 50 ? 'var(--primary)' : '#E74C3C'), width: `${rate}%`}} />
+                                  <div style={{height: '100%', background: rate >= 80 ? 'var(--correct)' : (rate >= 50 ? 'var(--primary)' : 'var(--incorrect)'), width: `${rate}%`}} />
                                 </div>
                               </div>
                             );
@@ -607,7 +742,8 @@ export default function App() {
                                 wrongItems.push({
                                   quizTitle: q.title,
                                   questionTitle: question.title,
-                                  userAns: p.detailedResults![`ans_${question.id}`],
+                                  userAns: formatAnswer(question, p.detailedResults![`ans_${question.id}`]),
+                                  correctAns: question.type !== 'short' ? formatAnswer(question, question.correctAnswers) : '',
                                   aiFeedback: p.detailedResults![`reason_${question.id}`]
                                 });
                               }
@@ -619,14 +755,17 @@ export default function App() {
                           }
 
                           return wrongItems.map((item, i) => (
-                            <div key={i} style={{padding: 16, background: 'rgba(231, 76, 60, 0.05)', border: '1px solid rgba(231, 76, 60, 0.2)', borderRadius: 12}}>
+                            <div key={i} style={{padding: 16, background: 'var(--incorrect-soft)', border: '1px solid var(--incorrect)', borderRadius: 12}}>
                               <div style={{fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4}}>{item.quizTitle}</div>
                               <div style={{fontSize: 14, fontWeight: 700, marginBottom: 12}}>{item.questionTitle}</div>
                               <div style={{fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8, padding: 8, background: 'var(--bg-color)', borderRadius: 8}}>
-                                <strong>나의 답변:</strong> {Array.isArray(item.userAns) ? item.userAns.join(', ') : item.userAns || '(없음)'}
+                                <strong>나의 답변:</strong> {item.userAns}
+                                {item.correctAns && (
+                                  <div style={{marginTop: 4, color: 'var(--correct)'}}><strong>정답:</strong> {item.correctAns}</div>
+                                )}
                               </div>
                               {item.aiFeedback && (
-                                <div style={{fontSize: 13, color: '#E74C3C', fontWeight: 600, padding: 8, background: 'rgba(231, 76, 60, 0.1)', borderRadius: 8}}>
+                                <div style={{fontSize: 13, color: 'var(--incorrect)', fontWeight: 600, padding: 8, background: 'var(--incorrect-soft)', borderRadius: 8}}>
                                   <strong>AI 분석:</strong> {item.aiFeedback}
                                 </div>
                               )}
@@ -652,7 +791,7 @@ export default function App() {
           <p className="home-subtitle">날짜별로 할당된 문제를 풀고 실력을 점검하세요.</p>
           
           {announcements.length > 0 && (
-            <div style={{background: 'linear-gradient(135deg, rgba(49, 130, 246, 0.1), rgba(49, 130, 246, 0.05))', border: '1px solid rgba(49, 130, 246, 0.2)', padding: '16px 20px', borderRadius: 16, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12}}>
+            <div style={{background: 'linear-gradient(135deg, var(--primary-soft), var(--primary-soft))', border: '1px solid var(--primary-soft-strong)', padding: '16px 20px', borderRadius: 16, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12}}>
               <span style={{fontSize: 20}}>📢</span>
               <div style={{flex: 1}}>
                 <div style={{fontSize: 14, fontWeight: 600, color: 'var(--primary)'}}>공지사항</div>
@@ -673,17 +812,17 @@ export default function App() {
               
               const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID) || (isExhausted && loggedInUser !== ADMIN_ID) || (isPastDeadline && loggedInUser !== ADMIN_ID);
               return (
-                <div key={q.id} className={`quiz-card ${isLocked ? 'disabled' : ''}`} onClick={() => !isLocked && startQuiz(q)} style={isCompleted ? {borderColor: 'rgba(39, 174, 96, 0.4)'} : {}}>
+                <div key={q.id} className={`quiz-card ${isLocked ? 'disabled' : ''}`} onClick={() => !isLocked && startQuiz(q)} style={isCompleted ? {borderColor: 'var(--correct)'} : {}}>
                   <div className="quiz-info">
-                    <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? '#27AE60' : 'var(--primary)')}}>
+                    <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? 'var(--correct)' : 'var(--primary)')}}>
                       <Calendar size={12} style={{display: 'inline', marginRight: 4}}/> {q.date} {isCompleted && '✓ 완료'} {q.isPublished === false && '(비공개)'} {isExhausted && '(횟수 초과)'} {isPastDeadline && '(마감됨)'}
                       {loggedInUser === ADMIN_ID && q.visibleTo && q.visibleTo.length > 0 && (
-                        <span style={{marginLeft: 8, padding: '2px 6px', background: 'rgba(49, 130, 246, 0.1)', color: 'var(--primary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
+                        <span style={{marginLeft: 8, padding: '2px 6px', background: 'var(--primary-soft)', color: 'var(--primary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
                           대상: {q.visibleTo.length}명
                         </span>
                       )}
                       {q.deadline && !isPastDeadline && (
-                        <span style={{marginLeft: 8, padding: '2px 6px', background: isNearDeadline ? 'rgba(231, 76, 60, 0.1)' : 'rgba(149, 165, 166, 0.1)', color: isNearDeadline ? '#E74C3C' : 'var(--text-secondary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
+                        <span style={{marginLeft: 8, padding: '2px 6px', background: isNearDeadline ? 'var(--incorrect-soft)' : 'var(--muted-soft)', color: isNearDeadline ? 'var(--incorrect)' : 'var(--text-secondary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
                           마감: {q.deadline} {isNearDeadline && '⚠️ 임박'}
                         </span>
                       )}
@@ -692,12 +831,12 @@ export default function App() {
                     <p className="quiz-desc">{q.description}</p>
                     {isCompleted && (
                       <div style={{marginTop: 8, display: 'flex', gap: 12}}>
-                        <p style={{fontSize: 12, fontWeight: 700, color: '#27AE60'}}>내 최고 점수: {p.bestScore ?? p.score} / {p.total}</p>
+                        <p style={{fontSize: 12, fontWeight: 700, color: 'var(--correct)'}}>내 최고 점수: {p.bestScore ?? p.score} / {p.total}</p>
                         <p style={{fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)'}}>응시 횟수: {attempts} {q.maxAttempts ? `/ ${q.maxAttempts}` : ''}</p>
                       </div>
                     )}
                   </div>
-                  <div className="quiz-action" style={{color: isCompleted ? '#27AE60' : undefined}}><ArrowRight size={20} /></div>
+                  <div className="quiz-action" style={{color: isCompleted ? 'var(--correct)' : undefined}}><ArrowRight size={20} /></div>
                 </div>
               );
             })}
@@ -722,22 +861,25 @@ export default function App() {
               </div>
               <div style={{display: 'flex', flexDirection: 'column', gap: 16}}>
                 {questions.filter(q => showOnlyWrong ? !results[q.id] : true).map((q, idx) => (
-                  <div key={q.id} style={{padding: 20, background: 'var(--surface)', borderRadius: 16, border: results[q.id] ? '1px solid #27AE60' : '1px solid #E74C3C'}}>
+                  <div key={q.id} style={{padding: 20, background: 'var(--surface)', borderRadius: 16, border: results[q.id] ? '1px solid var(--correct)' : '1px solid var(--incorrect)'}}>
                     <div style={{display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12}}>
-                      <span style={{background: results[q.id] ? '#27AE60' : '#E74C3C', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx+1}</span>
+                      <span style={{background: results[q.id] ? 'var(--correct)' : 'var(--incorrect)', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx+1}</span>
                       <strong style={{fontSize: 16}}>{q.title}</strong>
-                      {q.level === 2 && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(241, 196, 15, 0.1)', color: '#F39C12', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
-                      {q.level === 3 && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
-                      {(!q.level || q.level === 1) && <span style={{fontSize: 11, padding: '2px 6px', background: 'rgba(39, 174, 96, 0.1)', color: '#27AE60', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
+                      {q.level === 2 && <span style={{fontSize: 11, padding: '2px 6px', background: 'var(--warn-soft)', color: 'var(--warn)', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
+                      {q.level === 3 && <span style={{fontSize: 11, padding: '2px 6px', background: 'var(--incorrect-soft)', color: 'var(--incorrect)', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
+                      {(!q.level || q.level === 1) && <span style={{fontSize: 11, padding: '2px 6px', background: 'var(--correct-soft)', color: 'var(--correct)', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
                       <div style={{marginLeft: 'auto'}}>
-                        {results[q.id] ? <CheckCircle2 color="#27AE60" size={20} /> : <AlertCircle color="#E74C3C" size={20} />}
+                        {results[q.id] ? <CheckCircle2 color="var(--correct)" size={20} /> : <AlertCircle color="var(--incorrect)" size={20} />}
                       </div>
                     </div>
                     <div style={{fontSize: 14, color: 'var(--text-secondary)', padding: 12, background: 'var(--bg-color)', borderRadius: 12}}>
-                      <div style={{marginBottom: 8}}><strong style={{color: results[q.id] ? '#27AE60' : '#E74C3C'}}>내 답변:</strong> {Array.isArray(answers[q.id]) ? (answers[q.id] as string[]).join(', ') : (answers[q.id] || '(없음)')}</div>
+                      <div style={{marginBottom: 8}}><strong style={{color: results[q.id] ? 'var(--correct)' : 'var(--incorrect)'}}>내 답변:</strong> {formatAnswer(q, answers[q.id])}</div>
+                      {q.type !== 'short' && !results[q.id] && (
+                        <div style={{marginBottom: 8}}><strong style={{color: 'var(--correct)'}}>정답:</strong> {formatAnswer(q, q.correctAnswers)}</div>
+                      )}
                       
                       {results[`reason_${q.id}`] && (
-                        <div style={{marginBottom: 8, color: results[q.id] ? 'var(--primary)' : '#E74C3C', fontWeight: 600, display: 'flex', gap: 6, alignItems: 'flex-start'}}>
+                        <div style={{marginBottom: 8, color: results[q.id] ? 'var(--primary)' : 'var(--incorrect)', fontWeight: 600, display: 'flex', gap: 6, alignItems: 'flex-start'}}>
                           <span>🤖</span>
                           <div>
                             <span style={{fontWeight: 700}}>{results[q.id] ? 'AI 피드백: ' : 'AI 오답 분석: '}</span>
@@ -797,7 +939,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <ProctorShell active={!!proctorSessionId} sessionId={proctorSessionId}>
+            <ProctorShell active={!!proctorSessionId} sessionId={proctorSessionId} mode={proctorMode}>
               <header className="app-header" style={{padding: '20px 0'}}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
                   <button onClick={goHome} style={{background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--text-secondary)'}}><Home size={18} /> 나가기</button>
@@ -813,7 +955,7 @@ export default function App() {
                         fontWeight: 700, 
                         fontSize: 15, 
                         color: timeLeft <= 120 ? 'var(--incorrect)' : 'var(--text-secondary)',
-                        background: timeLeft <= 120 ? 'rgba(231, 76, 60, 0.08)' : 'transparent',
+                        background: timeLeft <= 120 ? 'var(--incorrect-soft)' : 'transparent',
                         padding: timeLeft <= 120 ? '4px 10px' : '0',
                         borderRadius: 8,
                         transition: 'all 0.3s ease'
@@ -836,7 +978,7 @@ export default function App() {
                         style={{
                           width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
                           border: currentQuestionIdx === idx ? '2px solid var(--primary)' : (hasAns ? '1px solid var(--primary)' : '1px solid var(--border)'),
-                          background: currentQuestionIdx === idx ? 'var(--primary)' : (hasAns ? 'rgba(49, 130, 246, 0.1)' : 'var(--surface)'),
+                          background: currentQuestionIdx === idx ? 'var(--primary)' : (hasAns ? 'var(--primary-soft)' : 'var(--surface)'),
                           color: currentQuestionIdx === idx ? '#fff' : (hasAns ? 'var(--primary)' : 'var(--text-secondary)'),
                           fontWeight: 700, fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
                           padding: 0
@@ -851,53 +993,103 @@ export default function App() {
               <main style={{padding: '40px 0'}}>
                 <h2 style={{fontSize: 22, fontWeight: 800, marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12}}>
                   {currentQuestion.title}
-                  {currentQuestion.level === 2 && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(241, 196, 15, 0.1)', color: '#F39C12', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
-                  {currentQuestion.level === 3 && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(231, 76, 60, 0.1)', color: '#E74C3C', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
-                  {(!currentQuestion.level || currentQuestion.level === 1) && <span style={{fontSize: 12, padding: '2px 6px', background: 'rgba(39, 174, 96, 0.1)', color: '#27AE60', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
+                  {currentQuestion.level === 2 && <span style={{fontSize: 12, padding: '2px 6px', background: 'var(--warn-soft)', color: 'var(--warn)', borderRadius: 6, fontWeight: 700}}>🟡 보통</span>}
+                  {currentQuestion.level === 3 && <span style={{fontSize: 12, padding: '2px 6px', background: 'var(--incorrect-soft)', color: 'var(--incorrect)', borderRadius: 6, fontWeight: 700}}>🔴 심화</span>}
+                  {(!currentQuestion.level || currentQuestion.level === 1) && <span style={{fontSize: 12, padding: '2px 6px', background: 'var(--correct-soft)', color: 'var(--correct)', borderRadius: 6, fontWeight: 700}}>🟢 기초</span>}
                 </h2>
                 {currentQuestion.type === 'short' ? (
                   <CodeEditor
                     value={(currentAnswer as string) || ''}
-                    onChange={(val) => setAnswers({...answers, [currentQuestion.id]: val})}
+                    onChange={(val) => setAnswers(prev => ({...prev, [currentQuestion.id]: val}))}
                     placeholder="코드를 작성하세요..."
                   />
                 ) : (
                   <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
-                    {currentQuestion.options?.map((opt, idx) => (
-                      <button key={idx} onClick={() => setAnswers({...answers, [currentQuestion.id]: [idx.toString()]})} style={{padding: 20, textAlign: 'left', borderRadius: 16, border: (Array.isArray(currentAnswer) && currentAnswer.includes(idx.toString())) ? '2px solid var(--primary)' : '1px solid var(--border)', background: (Array.isArray(currentAnswer) && currentAnswer.includes(idx.toString())) ? 'rgba(49, 130, 246, 0.05)' : 'var(--surface)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}>
-                        <div style={{width: 20, height: 20, borderRadius: '50%', border: '2px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>{(Array.isArray(currentAnswer) && currentAnswer.includes(idx.toString())) && <div style={{width: 10, height: 10, borderRadius: '50%', background: 'var(--primary)'}} />}</div>
-                        {opt}
-                      </button>
-                    ))}
+                    {isMultiSelect && (
+                      <div style={{fontSize: 13, fontWeight: 700, color: 'var(--primary)', marginBottom: 4}}>
+                        정답을 모두 고르세요 (복수 선택)
+                      </div>
+                    )}
+                    {currentQuestion.options?.map((opt, idx) => {
+                      const key = idx.toString();
+                      const selectedArr = Array.isArray(currentAnswer) ? currentAnswer as string[] : [];
+                      const selected = selectedArr.includes(key);
+                      const toggle = () => {
+                        // 복수정답 문항은 누를 때마다 토글, 단일정답은 교체
+                        setAnswers(prev => {
+                          const cur = Array.isArray(prev[currentQuestion.id])
+                            ? (prev[currentQuestion.id] as string[])
+                            : [];
+                          const next = isMultiSelect
+                            ? (cur.includes(key) ? cur.filter(v => v !== key) : [...cur, key])
+                            : [key];
+                          return { ...prev, [currentQuestion.id]: next };
+                        });
+                      };
+                      return (
+                        <button
+                          key={idx}
+                          onClick={toggle}
+                          aria-pressed={selected}
+                          style={{padding: 20, textAlign: 'left', borderRadius: 16, border: selected ? '2px solid var(--primary)' : '1px solid var(--border)', background: selected ? 'var(--primary-soft)' : 'var(--surface)', color: 'var(--text-primary)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12}}
+                        >
+                          <div style={{width: 20, height: 20, flexShrink: 0, borderRadius: isMultiSelect ? 6 : '50%', border: selected ? '2px solid var(--primary)' : '2px solid var(--border)', background: selected && isMultiSelect ? 'var(--primary)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                            {selected && (isMultiSelect
+                              ? <Check size={14} color="#fff" strokeWidth={3} />
+                              : <div style={{width: 10, height: 10, borderRadius: '50%', background: 'var(--primary)'}} />)}
+                          </div>
+                          {opt}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </main>
-              <footer style={{display: 'flex', justifyContent: 'space-between', marginTop: 40}}>
+              <footer style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 40}}>
                 <button onClick={() => setCurrentQuestionIdx(v => v - 1)} disabled={currentQuestionIdx === 0} className="btn btn-secondary">이전</button>
-                <button onClick={() => currentQuestionIdx === totalQuestions - 1 ? setShowConfirmModal(true) : setCurrentQuestionIdx(v => v + 1)} disabled={!isAnswered || isGrading} className="btn btn-primary" style={{minWidth: 120}}>{isGrading ? <Loader2 className="animate-spin" /> : (currentQuestionIdx === totalQuestions - 1 ? '제출하기' : '다음')}</button>
+                {/* 미답변 문제도 건너뛸 수 있게 허용 — 제출 확인 모달에서 최종 확인한다 */}
+                {!isAnswered && currentQuestionIdx < totalQuestions - 1 && (
+                  <span style={{fontSize: 12, color: 'var(--text-tertiary)'}}>답을 비워두고 넘어갈 수 있어요</span>
+                )}
+                <button
+                  onClick={() => currentQuestionIdx === totalQuestions - 1 ? setShowConfirmModal(true) : setCurrentQuestionIdx(v => v + 1)}
+                  disabled={isGrading}
+                  className="btn btn-primary"
+                  style={{minWidth: 120, flex: 'none'}}
+                >
+                  {isGrading ? <Loader2 className="animate-spin" /> : (currentQuestionIdx === totalQuestions - 1 ? '제출하기' : '다음')}
+                </button>
               </footer>
             </ProctorShell>
           )}
         </div>
       )}
 
-      <AnimatePresence>
-        {showConfirmModal && selectedQuiz && (
-          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)'}}>
+      {showConfirmModal && selectedQuiz && (
+          <motion.div
+            key="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
+            transition={{duration: 0.15}}
+            style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)'}}
+          >
             <motion.div initial={{scale: 0.9, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.9, opacity: 0}} style={{background: 'var(--surface)', padding: 40, borderRadius: 32, width: '100%', maxWidth: 400, textAlign: 'center', boxShadow: '0 24px 48px rgba(0,0,0,0.2)'}}>
               <h2 style={{fontSize: 24, fontWeight: 800, marginBottom: 12}}>답안 제출 확인</h2>
               <div style={{fontSize: 15, color: 'var(--text-secondary)', marginBottom: 24}}>
-                총 {totalQuestions}문제 중 <strong style={{color: 'var(--primary)'}}>{Object.keys(answers).length}</strong>문제의 답안을 작성했습니다.
+                총 {totalQuestions}문제 중 <strong style={{color: 'var(--primary)'}}>{answeredCount}</strong>문제의 답안을 작성했습니다.
               </div>
-              
-              {totalQuestions > Object.keys(answers).length && (
-                <div style={{background: 'rgba(231, 76, 60, 0.1)', padding: 16, borderRadius: 16, marginBottom: 24, textAlign: 'left'}}>
-                  <div style={{fontSize: 13, fontWeight: 700, color: '#E74C3C', marginBottom: 8}}><AlertCircle size={14} style={{display: 'inline', verticalAlign: 'text-bottom'}} /> 미답변 문제</div>
+
+              {totalQuestions > answeredCount && (
+                <div style={{background: 'var(--incorrect-soft)', padding: 16, borderRadius: 16, marginBottom: 24, textAlign: 'left'}}>
+                  <div style={{fontSize: 13, fontWeight: 700, color: 'var(--incorrect)', marginBottom: 8}}><AlertCircle size={14} style={{display: 'inline', verticalAlign: 'text-bottom'}} /> 미답변 문제</div>
                   <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
                     {questions.map((q, idx) => {
                       const ans = answers[q.id];
                       const hasAns = q.type === 'short' ? !!(ans && (ans as string).trim()) : (Array.isArray(ans) && ans.length > 0);
-                      if (!hasAns) return <span key={q.id} style={{background: '#E74C3C', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx + 1}</span>;
+                      if (!hasAns) return <span key={q.id} style={{background: 'var(--incorrect)', color: 'white', padding: '2px 8px', borderRadius: 6, fontSize: 12, fontWeight: 700}}>Q{idx + 1}</span>;
                       return null;
                     })}
                   </div>
@@ -908,33 +1100,53 @@ export default function App() {
                 <button type="button" onClick={() => setShowConfirmModal(false)} className="btn btn-secondary" style={{flex: 1, padding: 16}}>돌아가기</button>
                 <button type="button" onClick={() => { setShowConfirmModal(false); gradeQuiz(); }} className="btn btn-primary" style={{flex: 1, padding: 16}}>제출하기</button>
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+          </motion.div>
+        </motion.div>
+      )}
 
-      <AnimatePresence>
-        {showPasswordModal && (
-          <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)'}}>
+      {showPasswordModal && (
+          <motion.div
+            key="admin-modal"
+            role="dialog"
+            aria-modal="true"
+            initial={{opacity: 0}}
+            animate={{opacity: 1}}
+            exit={{opacity: 0}}
+            transition={{duration: 0.15}}
+            style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(8px)'}}
+          >
             <motion.div initial={{scale: 0.9, opacity: 0}} animate={{scale: 1, opacity: 1}} exit={{scale: 0.9, opacity: 0}} style={{background: 'var(--surface)', padding: 40, borderRadius: 32, width: '100%', maxWidth: 400, textAlign: 'center', boxShadow: '0 24px 48px rgba(0,0,0,0.2)'}}>
               <h2 style={{fontSize: 24, fontWeight: 800, marginBottom: 12}}>관리자 인증</h2>
               <p style={{fontSize: 15, color: 'var(--text-secondary)', marginBottom: 32}}>보안을 위해 비밀번호를 입력해주세요.</p>
               <form onSubmit={handlePasswordSubmit}>
-                <div style={{position: 'relative', marginBottom: 32}}>
-                  <input type="password" autoFocus value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} style={{width: '100%', padding: '20px', borderRadius: 20, border: '1px solid var(--border)', fontSize: 16, textAlign: 'center', background: 'var(--bg-color)', color: 'transparent', caretColor: 'var(--primary)', outline: 'none'}} />
+                <div style={{position: 'relative', marginBottom: passwordError ? 12 : 32}}>
+                  <input
+                    type="password"
+                    autoFocus
+                    aria-label="관리자 비밀번호"
+                    value={adminPassword}
+                    onChange={(e) => { setAdminPassword(e.target.value); setPasswordError(''); }}
+                    style={{width: '100%', padding: '20px', borderRadius: 20, border: passwordError ? '1px solid var(--incorrect)' : '1px solid var(--border)', fontSize: 16, textAlign: 'center', background: 'var(--bg-color)', color: 'transparent', caretColor: 'var(--primary)', outline: 'none'}}
+                  />
                   <div style={{position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 24, letterSpacing: 8}}>
                     {adminPassword.split('').map((_, i) => <motion.span key={i} initial={{scale: 0}} animate={{scale: 1}}>💩</motion.span>)}
                   </div>
                 </div>
+                {passwordError && (
+                  <div role="alert" style={{fontSize: 13, color: 'var(--incorrect)', fontWeight: 600, marginBottom: 20, lineHeight: 1.5}}>
+                    {passwordError}
+                  </div>
+                )}
                 <div style={{display: 'flex', gap: 16}}>
                   <button type="button" onClick={() => setShowPasswordModal(false)} className="btn btn-secondary" style={{flex: 1, padding: 16}}>취소</button>
-                  <button type="submit" className="btn btn-primary" style={{flex: 1, padding: 16}}>확인</button>
+                  <button type="submit" disabled={checkingPassword || !adminPassword} className="btn btn-primary" style={{flex: 1, padding: 16}}>
+                    {checkingPassword ? <Loader2 className="animate-spin" size={18} /> : '확인'}
+                  </button>
                 </div>
               </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+          </motion.div>
+        </motion.div>
+      )}
     </div>
   );
 }
