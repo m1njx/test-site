@@ -1,75 +1,119 @@
 rules_version = '2';
 
-// AIM TEAM LMS — Firestore 보안 규칙
+// AIM TEAM LMS — Firestore 보안 규칙 (Firebase Auth 기반)
 //
-// 현재 앱은 Firebase Auth 를 쓰지 않고 학번만으로 로그인하므로,
-// 규칙 단계에서 "본인 문서만 쓰기" 같은 진짜 권한 분리는 불가능하다.
-// 아래 규칙은 그 전제 위에서 할 수 있는 최소한의 방어선이다:
-//   - 컬렉션 화이트리스트 (모르는 경로 전면 차단)
-//   - 문서 크기/형식 검증
-//   - 성적·진도의 임의 삭제 금지
+// 핵심 아이디어
+//  - 관리자 = `admins/{uid}` 문서가 존재하는 사용자. 이 컬렉션은 앱에서 쓸 수 없고
+//    Firebase 콘솔에서만 만들 수 있으므로, 개발자도구로 권한을 얻을 수 없다.
+//  - 학생 본인 = `students/{학번}.uid == request.auth.uid`.
+//    성적/진도/응시기록은 본인 것만 쓸 수 있다.
+//  - 성적과 부정행위 로그는 아무도 삭제할 수 없다(관리자 포함, 콘솔 제외).
 //
-// 제대로 잠그려면 docs/SECURITY.md 의 "Auth 도입" 절차를 따를 것.
+// 배포:  firebase deploy --only firestore:rules
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // 기본값: 전부 차단. 아래에서 명시한 경로만 열린다.
-    match /{document=**} {
-      allow read, write: if false;
+    /* ---------------------------- 헬퍼 ---------------------------- */
+    function signedIn() {
+      return request.auth != null;
     }
 
-    // 팀원 명부 — 로그인 시 조회. 쓰기는 콘솔/관리자만(여기선 차단).
+    function isAdmin() {
+      return signedIn()
+             && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // 해당 학번의 주인인가
+    function ownsStudent(sid) {
+      return signedIn()
+             && exists(/databases/$(database)/documents/students/$(sid))
+             && get(/databases/$(database)/documents/students/$(sid)).data.uid == request.auth.uid;
+    }
+
+    /* --------------------------- 관리자 --------------------------- */
+    // 읽기만 허용(본인 권한 확인용). 부여/회수는 Firebase 콘솔에서만.
+    match /admins/{uid} {
+      allow get: if signedIn();
+      allow list, write: if false;
+    }
+
+    /* --------------------------- 팀원 명부 -------------------------- */
     match /students/{studentId} {
+      // 로그인 화면에서 학번 존재 여부를 확인해야 하므로 읽기는 공개
       allow read: if true;
-      allow write: if false; // 팀원 추가/삭제는 Firebase 콘솔에서 수행
+
+      allow create, update: if
+        // 관리자는 명부를 관리할 수 있다 (단, uid 를 남의 것으로 바꿀 수는 없음)
+        isAdmin()
+        // 최초 가입 시 본인 uid 를 자기 문서에 기록하는 것만 허용.
+        // 이미 uid 가 있으면 덮어쓸 수 없어 계정 탈취를 막는다.
+        || (signedIn()
+            && request.resource.data.uid == request.auth.uid
+            && (!('uid' in resource.data) || resource.data.uid == request.auth.uid)
+            // 이름/학번을 마음대로 바꾸지 못하게
+            && request.resource.data.id == resource.data.id
+            && request.resource.data.name == resource.data.name);
+
+      allow delete: if isAdmin();
     }
 
-    // 퀴즈 정의 — 학생은 읽기만. 정답이 포함되므로 이상적이진 않지만
-    // 클라이언트 채점 구조상 불가피하다(서버 채점으로 옮기면 해결).
+    /* --------------------------- 학습 콘텐츠 ------------------------- */
+    // 학생은 읽기만, 편집은 관리자만
     match /quizzes/{quizId} {
-      allow read: if true;
-      allow write: if false; // 관리자 작업은 콘솔에서
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
 
     match /courses/{courseId} {
-      allow read: if true;
-      allow write: if false;
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
 
     match /announcements/{id} {
-      allow read: if true;
-      allow write: if false;
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
 
-    // 성적 — 생성/수정은 허용하되 삭제는 금지, 형식도 검증
+    /* ----------------------------- 성적 ----------------------------- */
     match /progress/{docId} {
-      allow read: if true;
-      allow create, update: if isValidProgress();
-      allow delete: if false;
+      allow read: if isAdmin() || ownsStudent(resource.data.studentId);
+      allow create, update: if isAdmin()
+                            || (ownsStudent(request.resource.data.studentId) && validProgress());
+      allow delete: if false; // 성적은 누구도 지울 수 없다
     }
 
-    // 레슨 진도 — 동일
-    match /lessonProgress/{docId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.keys().hasAll(['studentId', 'lessonId', 'status'])
-                            && request.resource.data.status in ['in_progress', 'completed'];
-      allow delete: if false;
-    }
-
-    // 부정행위 로그 — 생성/추가만 허용, 삭제 금지(증거 보전)
-    match /proctorSessions/{sessionId} {
-      allow read: if true;
-      allow create, update: if request.resource.data.keys().hasAll(['studentId', 'quizId'])
-                            && request.resource.data.events.size() <= 500;
-      allow delete: if false;
-    }
-
-    function isValidProgress() {
+    function validProgress() {
       let d = request.resource.data;
       return d.keys().hasAll(['studentId', 'quizId', 'score', 'total'])
              && d.score is int && d.total is int
              && d.score >= 0 && d.total >= 0 && d.score <= d.total;
+    }
+
+    /* --------------------------- 레슨 진도 --------------------------- */
+    match /lessonProgress/{docId} {
+      allow read: if isAdmin() || ownsStudent(resource.data.studentId);
+      allow create, update: if isAdmin()
+                            || (ownsStudent(request.resource.data.studentId)
+                                && request.resource.data.status in ['in_progress', 'completed']);
+      allow delete: if false;
+    }
+
+    /* -------------------------- 부정행위 로그 ------------------------- */
+    match /proctorSessions/{sessionId} {
+      // 학생은 자기 기록만, 관리자는 전체 열람
+      allow read: if isAdmin() || ownsStudent(resource.data.studentId);
+      allow create: if ownsStudent(request.resource.data.studentId);
+      // 이벤트 추가/제출 결과 기록만 허용. 학번은 바꿀 수 없다.
+      allow update: if ownsStudent(resource.data.studentId)
+                    && request.resource.data.studentId == resource.data.studentId
+                    && request.resource.data.events.size() <= 500;
+      allow delete: if false; // 증거 보전
+    }
+
+    /* --------------------------- 나머지 차단 -------------------------- */
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

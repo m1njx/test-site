@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 import type { VideoLesson, LessonProgress } from './types';
 import { upsertVideoProgress, mergeRanges, rangesTotal } from './lmsApi';
-import { ADMIN_ID } from '../team';
 
 const MAX_RATE = 1; // 배속 상한 (꼼수 방지)
 const SEEK_TOLERANCE = 1.5; // 이 이상 앞으로 점프하면 되돌림
@@ -50,7 +49,7 @@ export default function VideoPlayer({
   onCompleted,
   preview,
 }: Props) {
-  const restricted = !preview && studentId !== ADMIN_ID;
+  const restricted = !preview;
 
   const [duration, setDuration] = useState(lesson.durationSec || initialProgress?.durationSec || 0);
   const [watchedSec, setWatchedSec] = useState(initialProgress?.watchedSec || 0);

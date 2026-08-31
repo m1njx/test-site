@@ -11,7 +11,6 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { ADMIN_ID } from '../team';
 import type { Course, LessonProgress, ProctorEvent, ProctorSession } from './types';
 import { computeFlagScore, PROCTOR_FLAG_THRESHOLD } from './types';
 
@@ -184,7 +183,6 @@ export interface VideoProgressPatch {
 
 // 영상 진행 저장. 완료 조건 충족 시 completed 로 전환하고 true 반환.
 export async function upsertVideoProgress(patch: VideoProgressPatch): Promise<{ completed: boolean; watchedSec: number }> {
-  if (patch.studentId === ADMIN_ID) return { completed: true, watchedSec: 0 };
   const existing = await readOneProgress(patch.studentId, patch.lessonId);
   const merged = mergeRanges([...(existing?.watchedRanges || []), ...patch.newRanges]);
   const watchedSec = rangesTotal(merged);
@@ -221,7 +219,6 @@ export async function markQuizLesson(opts: {
   passScore: number;
   attemptId?: string;
 }): Promise<void> {
-  if (opts.studentId === ADMIN_ID) return;
   const existing = await readOneProgress(opts.studentId, opts.lessonId);
   const bestScore = Math.max(existing?.bestScore ?? 0, opts.score);
   const rate = opts.total > 0 ? (bestScore / opts.total) * 100 : 0;

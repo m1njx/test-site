@@ -2,8 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp, Check, WifiOff } from 'lucide-react';
 import { quizzes, type Quiz } from './data';
-import { ADMIN_ID, type Student } from './team';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress, verifyStudent } from './api';
+import { type Student } from './team';
+import { observeSession, signOutUser, type SessionUser } from './session';
+import { hasAuth } from './firebase';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import CourseHome from './lms/CourseHome';
@@ -86,31 +88,24 @@ const CodeEditor = ({ value, onChange, placeholder }: { value: string, onChange:
 };
 
 export default function App() {
-  const [loggedInUser, setLoggedInUser] = useState<string | null>(() => {
-    return localStorage.getItem('aim_team_user');
-  });
-  const [loggedInStudent, setLoggedInStudent] = useState<Student | null>(null);
+  // 세션은 Firebase Auth 가 관리한다. (Mock 환경에서는 localStorage 기반으로 흉내)
+  const [session, setSession] = useState<SessionUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [sessionNonce, setSessionNonce] = useState(0);
 
   useEffect(() => {
-    if (loggedInUser) {
-      localStorage.setItem('aim_team_user', loggedInUser);
-    } else {
-      localStorage.removeItem('aim_team_user');
-    }
-  }, [loggedInUser]);
+    const unsub = observeSession((u) => {
+      setSession(u);
+      setAuthReady(true);
+    });
+    return unsub;
+  }, [sessionNonce]);
 
-  useEffect(() => {
-    const fetchStudent = async () => {
-      if (loggedInUser) {
-        const student = await verifyStudent(loggedInUser);
-        setLoggedInStudent(student);
-      } else {
-        setLoggedInStudent(null);
-      }
-    };
-    fetchStudent();
-  }, [loggedInUser]);
-  
+  const loggedInUser = session?.studentId ?? null;
+  /** 관리자 여부는 Firestore 의 admins/{uid} 문서로 판정된다 (클라이언트에서 위조 불가) */
+  const isAdminUser = session?.isAdmin ?? false;
+
+
   const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin' | 'course'>('home');
   const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -217,7 +212,7 @@ export default function App() {
   }, []);
 
   const loadLessonProgress = useCallback(async () => {
-    if (loggedInUser && loggedInUser !== ADMIN_ID) {
+    if (loggedInUser && !isAdminUser) {
       setLessonProgress(await getLessonProgress(loggedInUser));
     } else {
       setLessonProgress([]);
@@ -240,6 +235,13 @@ export default function App() {
   const [checkingPassword, setCheckingPassword] = useState(false);
 
   const enterAdmin = () => {
+    // Firebase Auth 사용 시 관리자 권한은 이미 서버(admins/{uid})에서 확인됐다.
+    // 클라이언트 비밀번호 모달은 Auth 가 없는 Mock 환경에서만 의미가 있다.
+    if (hasAuth) {
+      loadTeam();
+      setCurrentView('admin');
+      return;
+    }
     setShowPasswordModal(true);
     setAdminPassword('');
     setPasswordError('');
@@ -304,7 +306,7 @@ export default function App() {
   }, [currentView, selectedQuiz, ensurePyodide]);
 
   const fetchProgress = useCallback(async () => {
-    if (loggedInUser && loggedInUser !== ADMIN_ID) {
+    if (loggedInUser && !isAdminUser) {
       const p = await getStudentProgress(loggedInUser);
       setStudentProgress(p);
     }
@@ -335,7 +337,15 @@ export default function App() {
     }
   }, [answers, selectedQuiz, loggedInUser]);
 
-  if (!loggedInUser) return <Login onLogin={setLoggedInUser} />;
+  if (!authReady) {
+    return (
+      <div className="app-container" style={{background: 'transparent', boxShadow: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh'}}>
+        <Loader2 className="animate-spin" size={28} color="var(--primary)" />
+      </div>
+    );
+  }
+
+  if (!loggedInUser) return <Login onLogin={() => setSessionNonce(n => n + 1)} />;
 
   const startQuiz = async (quiz: Quiz, ctx?: QuizLessonContext) => {
     if (quiz.questions.length === 0) return;
@@ -350,7 +360,7 @@ export default function App() {
     const rawMode: 'off' | 'log' | 'strict' = ctx
       ? (ctx.proctored ? 'strict' : 'off')
       : (quiz.proctoring || 'log');
-    const mode: 'off' | 'log' | 'strict' = loggedInUser === ADMIN_ID ? 'off' : rawMode;
+    const mode: 'off' | 'log' | 'strict' = isAdminUser ? 'off' : rawMode;
     setProctorMode(mode === 'strict' ? 'strict' : 'log');
 
     if (mode !== 'off' && loggedInUser) {
@@ -358,7 +368,7 @@ export default function App() {
         const sid = await createProctorSession({
           id: genId(),
           studentId: loggedInUser,
-          studentName: loggedInStudent?.name,
+          studentName: session?.name,
           quizId: quiz.id,
           quizTitle: quiz.title,
           courseId: ctx?.courseId,
@@ -422,10 +432,15 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    setLoggedInUser(null);
+  const handleLogout = async () => {
+    await signOutUser();
+    setSession(null);
     setStudentProgress([]);
+    setLessonProgress([]);
+    setSelectedQuiz(null);
+    setSelectedCourse(null);
     setCurrentView('home');
+    setSessionNonce(n => n + 1);
   };
 
   const resetQuiz = async () => {
@@ -441,14 +456,14 @@ export default function App() {
     const rawMode: 'off' | 'log' | 'strict' = courseCtx
       ? (courseCtx.proctored ? 'strict' : 'off')
       : (selectedQuiz?.proctoring || 'log');
-    const mode: 'off' | 'log' | 'strict' = loggedInUser === ADMIN_ID ? 'off' : rawMode;
+    const mode: 'off' | 'log' | 'strict' = isAdminUser ? 'off' : rawMode;
     setProctorMode(mode === 'strict' ? 'strict' : 'log');
     if (mode !== 'off' && selectedQuiz && loggedInUser) {
       try {
         const sid = await createProctorSession({
           id: genId(),
           studentId: loggedInUser,
-          studentName: loggedInStudent?.name,
+          studentName: session?.name,
           quizId: selectedQuiz.id,
           quizTitle: selectedQuiz.title,
           courseId: courseCtx?.courseId,
@@ -548,13 +563,15 @@ export default function App() {
     setResults(fullResults);
 
     try {
-      await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
-      await fetchProgress();
+      if (!isAdminUser) {
+        await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
+        await fetchProgress();
+      }
       localStorage.removeItem(`aim_quiz_answers_${selectedQuiz!.id}_${loggedInUser}`);
     } catch (e) { alert("결과 저장 실패"); }
 
     // 코스 퀴즈 레슨이면 이수 여부 기록
-    if (courseCtx && loggedInUser) {
+    if (courseCtx && loggedInUser && !isAdminUser) {
       try {
         await markQuizLesson({
           studentId: loggedInUser,
@@ -584,7 +601,7 @@ export default function App() {
 
   // Helper variables for Home view
   const visibleQuizzes = dynamicQuizzes.filter(q => {
-    if (loggedInUser === ADMIN_ID) return true;
+    if (isAdminUser) return true;
     if (!q.visibleTo || q.visibleTo.length === 0) return true;
     return q.visibleTo.includes(loggedInUser);
   });
@@ -640,6 +657,7 @@ export default function App() {
         <CoursePlayer
           course={selectedCourse}
           studentId={loggedInUser}
+          isAdmin={isAdminUser}
           lessonProgress={lessonProgress}
           quizzesById={Object.fromEntries(dynamicQuizzes.map((q) => [q.id, q]))}
           onBack={() => { setSelectedCourse(null); setCurrentView('home'); loadLessonProgress(); }}
@@ -652,7 +670,7 @@ export default function App() {
         <div className="home-container" style={{paddingTop: 24}}>
           <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24}}>
             <div style={{fontWeight: 700, color: 'var(--text-secondary)'}}>
-              안녕하세요, <span style={{color: 'var(--primary)'}}>{loggedInStudent?.name || (loggedInUser === ADMIN_ID ? "강민제" : "로딩 중...")}</span>님
+              안녕하세요, <span style={{color: 'var(--primary)'}}>{session?.name || "로딩 중..."}</span>님
             </div>
             <div style={{display: 'flex', alignItems: 'center', gap: 16}}>
               <button onClick={() => setIsDarkMode(!isDarkMode)} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center'}}>
@@ -664,7 +682,7 @@ export default function App() {
             </div>
           </div>
 
-          {loggedInUser === ADMIN_ID ? (
+          {isAdminUser ? (
             <button onClick={enterAdmin} className="btn btn-primary" style={{width: '100%', marginBottom: 32, padding: 20}}>
               <Shield size={24} /> 관리자 대시보드 입장
             </button>
@@ -784,6 +802,7 @@ export default function App() {
             courses={courses}
             lessonProgress={lessonProgress}
             studentId={loggedInUser}
+            isAdmin={isAdminUser}
             onSelect={(c) => { setSelectedCourse(c); setCurrentView('course'); }}
           />
 
@@ -810,13 +829,13 @@ export default function App() {
               const isPastDeadline = q.deadline ? new Date(`${q.deadline}T23:59:59`).getTime() < Date.now() : false;
               const isNearDeadline = q.deadline && !isPastDeadline && !isCompleted ? new Date(`${q.deadline}T23:59:59`).getTime() - Date.now() < 24 * 60 * 60 * 1000 : false;
               
-              const isLocked = q.questions.length === 0 || (q.isPublished === false && loggedInUser !== ADMIN_ID) || (isExhausted && loggedInUser !== ADMIN_ID) || (isPastDeadline && loggedInUser !== ADMIN_ID);
+              const isLocked = q.questions.length === 0 || (q.isPublished === false && !isAdminUser) || (isExhausted && !isAdminUser) || (isPastDeadline && !isAdminUser);
               return (
                 <div key={q.id} className={`quiz-card ${isLocked ? 'disabled' : ''}`} onClick={() => !isLocked && startQuiz(q)} style={isCompleted ? {borderColor: 'var(--correct)'} : {}}>
                   <div className="quiz-info">
                     <div className="quiz-date" style={{color: isLocked ? 'var(--text-tertiary)' : (isCompleted ? 'var(--correct)' : 'var(--primary)')}}>
                       <Calendar size={12} style={{display: 'inline', marginRight: 4}}/> {q.date} {isCompleted && '✓ 완료'} {q.isPublished === false && '(비공개)'} {isExhausted && '(횟수 초과)'} {isPastDeadline && '(마감됨)'}
-                      {loggedInUser === ADMIN_ID && q.visibleTo && q.visibleTo.length > 0 && (
+                      {isAdminUser && q.visibleTo && q.visibleTo.length > 0 && (
                         <span style={{marginLeft: 8, padding: '2px 6px', background: 'var(--primary-soft)', color: 'var(--primary)', borderRadius: 6, fontSize: 10, fontWeight: 700}}>
                           대상: {q.visibleTo.length}명
                         </span>

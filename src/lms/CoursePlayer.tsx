@@ -12,7 +12,6 @@ import {
 import type { Course, Lesson, LessonProgress, QuizLesson } from './types';
 import { flattenLessons } from './types';
 import type { Quiz } from '../data';
-import { ADMIN_ID } from '../team';
 import VideoPlayer from './VideoPlayer';
 
 export interface QuizLessonContext {
@@ -25,6 +24,7 @@ export interface QuizLessonContext {
 interface Props {
   course: Course;
   studentId: string;
+  isAdmin: boolean;
   lessonProgress: LessonProgress[];
   quizzesById: Record<string, Quiz>;
   onBack: () => void;
@@ -35,13 +35,13 @@ interface Props {
 export default function CoursePlayer({
   course,
   studentId,
+  isAdmin,
   lessonProgress,
   quizzesById,
   onBack,
   onStartQuizLesson,
   onVideoCompleted,
 }: Props) {
-  const isAdmin = studentId === ADMIN_ID;
   const flat = useMemo(() => flattenLessons(course), [course]);
   const progressByLesson = useMemo(() => {
     const m: Record<string, LessonProgress> = {};

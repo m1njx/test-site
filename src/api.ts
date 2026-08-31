@@ -2,7 +2,6 @@ import { db, isMock } from './firebase';
 import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy, getDoc } from 'firebase/firestore';
 import type { Quiz } from './data';
 
-import { ADMIN_ID } from './team';
 
 /**
  * Firebase 미설정(=isMock) 시 사용하는 로컬 저장소.
@@ -75,7 +74,6 @@ const CACHE_TTL = 1000 * 30; // 30 seconds cache
 
 export async function saveScore(studentId: string, quizId: string, score: number, total: number, detailedResults?: Record<string, any>) {
   if (!studentId || !quizId) return;
-  if (studentId === ADMIN_ID) return;
   
   // Firestore 호환 데이터로 정제
   const cleanValue = (val: any): any => {
@@ -306,9 +304,6 @@ export async function getStudents(): Promise<any[]> {
 
 export async function verifyStudent(studentId: string): Promise<any | null> {
   if (!studentId) return null;
-  if (studentId === ADMIN_ID) {
-    return { id: ADMIN_ID, name: "강민제" };
-  }
   try {
     if (isMock) {
       return mockRead<any>(MOCK_KEYS.students).find((s) => s.id === studentId) || null;
@@ -326,12 +321,15 @@ export async function verifyStudent(studentId: string): Promise<any | null> {
   }
 }
 
-export async function saveStudent(student: { id: string, name: string }) {
-  if (isMock) { mockUpsert(MOCK_KEYS.students, student); return; }
+export async function saveStudent(student: { id: string, name: string, email?: string }) {
+  const clean: any = { id: student.id, name: student.name };
+  if (student.email && student.email.trim()) clean.email = student.email.trim();
+
+  if (isMock) { mockUpsert(MOCK_KEYS.students, clean); return; }
   if (!db) return;
   try {
-    const docRef = doc(db, 'students', student.id);
-    await setDoc(docRef, student);
+    // merge: 이미 가입한 팀원의 uid 를 관리자 수정 때 날려버리지 않도록
+    await setDoc(doc(db, 'students', student.id), clean, { merge: true });
   } catch (error) {
     console.error("Error saving student:", error);
     throw error;

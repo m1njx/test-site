@@ -1,6 +1,10 @@
 export interface Student {
   id: string;
   name: string;
+  /** 실제 이메일 (선택). 있으면 비밀번호 재설정 메일을 받을 수 있다 */
+  email?: string;
+  /** Firebase Auth uid. 최초 비밀번호 설정 시 기록되며, Firestore 규칙의 본인 확인에 쓰인다 */
+  uid?: string;
 }
 
 // 관리자용 학번 (강민제님)

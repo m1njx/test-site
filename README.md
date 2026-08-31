@@ -5,6 +5,11 @@ React(TypeScript) + Firestore 기반의 서버리스 앱입니다.
 
 ## ✨ 주요 기능
 
+### 🔐 로그인
+- **학번 + 비밀번호** (Firebase Auth). 명부에 등록된 학번만 첫 로그인 시 비밀번호를 만들 수 있습니다.
+- 관리자 권한은 Firestore 의 `admins/{uid}` 문서로 결정되어 **클라이언트에서 위조할 수 없습니다.**
+- 설정 절차: [docs/AUTH-SETUP.md](docs/AUTH-SETUP.md)
+
 ### 👨‍🎓 학생
 - **코스 학습** — `코스 > 모듈 > 레슨(영상 | 퀴즈)` 구조. 진행률과 이수 여부를 한눈에.
 - **꼼수 없는 영상 시청** — 앞으로 건너뛰기 차단, 배속 제한, 탭 이탈 시 자동 일시정지,
@@ -77,13 +82,18 @@ printf '원하는비밀번호' | shasum -a 256
 
 ## 🔒 보안
 
-서버가 없는 정적 사이트라 구조적으로 클라이언트를 신뢰해야 하는 지점이 있습니다.
-**무엇이 막히고 무엇이 안 막히는지**와 Firestore 규칙 배포 방법은
-[docs/SECURITY.md](docs/SECURITY.md) 에 정리되어 있습니다. 운영 전에 한 번 읽어보세요.
+Firebase Auth + Firestore 보안 규칙으로 **본인 문서만 쓰기**, **관리자 서버 검증**,
+**성적·부정행위 로그 삭제 불가**를 강제합니다.
+
+1. [docs/AUTH-SETUP.md](docs/AUTH-SETUP.md) 순서대로 Auth 를 켜고 관리자 계정을 만드세요.
+2. 그 다음에 규칙을 배포합니다. (순서를 바꾸면 관리자 화면이 잠깁니다)
 
 ```bash
 firebase deploy --only firestore:rules
 ```
+
+여전히 남는 한계(퀴즈 정답 노출, Gemini 키 노출)와 그 이유는
+[docs/SECURITY.md](docs/SECURITY.md) 에 정리해 두었습니다. 운영 전에 한 번 읽어보세요.
 
 ## 🚀 배포
 

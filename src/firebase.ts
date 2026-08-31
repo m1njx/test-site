@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { getAuth, browserLocalPersistence, setPersistence } from 'firebase/auth';
 
 // Firebase configuration using Vite env variables (prefixed with VITE_)
 const firebaseConfig = {
@@ -17,10 +18,19 @@ export const isMock = !firebaseConfig.apiKey;
 
 let app;
 let db: any = null;
+let auth: any = null;
 
 if (!isMock) {
   app = initializeApp(firebaseConfig);
   db = getFirestore(app);
+  auth = getAuth(app);
+  // 새로고침해도 로그인 유지 (기본값이지만 명시)
+  setPersistence(auth, browserLocalPersistence).catch((e) =>
+    console.warn('auth persistence 설정 실패:', e),
+  );
 }
 
-export { db };
+/** Firebase Auth 사용 가능 여부. false 면 예전 방식(학번만 입력)으로 동작한다. */
+export const hasAuth = !isMock && !!auth;
+
+export { db, auth };

@@ -30,7 +30,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
   const [showQuizAiPreview, setShowQuizAiPreview] = useState(false);
 
   // Team Editor State
-  const [newStudent, setNewStudent] = useState({ id: '', name: '' });
+  const [newStudent, setNewStudent] = useState<{id: string; name: string; email?: string}>({ id: '', name: '', email: '' });
 
   // Quiz Editor State
   const [activeQuiz, setActiveQuiz] = useState<Quiz>({
@@ -187,7 +187,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     setLoading(true);
     try {
       await saveStudent(newStudent);
-      setNewStudent({ id: '', name: '' });
+      setNewStudent({ id: '', name: '', email: '' });
       onRefreshTeam();
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -1105,17 +1105,40 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)', marginBottom: 24}}>
               <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}><UserPlus size={20} color="var(--primary)"/> 팀원 추가</h2>
               <div style={{display: 'flex', gap: 12, flexWrap: 'wrap'}}>
-                <input type="text" placeholder="학번 (ID)" value={newStudent.id} onChange={(e) => setNewStudent({...newStudent, id: e.target.value})} style={{flex: '1 1 200px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
-                <input type="text" placeholder="이름" value={newStudent.name} onChange={(e) => setNewStudent({...newStudent, name: e.target.value})} style={{flex: '1 1 150px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
+                <input type="text" placeholder="학번 (ID)" value={newStudent.id} onChange={(e) => setNewStudent({...newStudent, id: e.target.value})} style={{flex: '1 1 160px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
+                <input type="text" placeholder="이름" value={newStudent.name} onChange={(e) => setNewStudent({...newStudent, name: e.target.value})} style={{flex: '1 1 130px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
+                <input type="email" placeholder="이메일 (선택)" value={newStudent.email || ''} onChange={(e) => setNewStudent({...newStudent, email: e.target.value})} style={{flex: '1 1 200px', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border)', fontSize: 15, background: 'var(--bg-color)', outline: 'none'}}/>
                 <button onClick={handleAddStudent} disabled={loading} className="btn btn-primary" style={{flex: '0 0 auto', minWidth: 120, padding: '0 28px', borderRadius: 12, fontWeight: 700, fontSize: 15, height: 48, boxShadow: '0 4px 12px var(--primary-soft-strong)'}}>팀원 등록</button>
               </div>
+              <p style={{fontSize: 12, color: 'var(--text-tertiary)', marginTop: 12, lineHeight: 1.6}}>
+                이메일을 넣으면 팀원이 <strong>비밀번호를 잊었을 때 스스로 재설정</strong>할 수 있습니다.
+                비워두면 관리자가 Firebase 콘솔에서 초기화해줘야 합니다.
+                <br />팀원은 등록된 학번으로 첫 로그인할 때 직접 비밀번호를 만듭니다.
+              </p>
             </div>
             <div style={{background: 'var(--surface)', padding: 24, borderRadius: 20, border: '1px solid var(--border)'}}>
               <h2 style={{fontSize: 18, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8}}><Users size={20} color="var(--primary)"/> 팀원 목록 ({dynamicTeam.length})</h2>
               {dynamicTeam.map(student => (
-                <div key={student.id} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--bg-color)', borderRadius: 12, marginBottom: 8}}>
-                  <div><span style={{fontWeight: 700, marginRight: 12}}>{student.name}</span><span style={{fontSize: 13, color: 'var(--text-secondary)'}}>{student.id}</span></div>
-                  <button onClick={() => handleDeleteStudent(student.id)} style={{background: 'transparent', border: 'none', color: 'var(--incorrect)', cursor: 'pointer'}}><Trash2 size={18} /></button>
+                <div key={student.id} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'var(--bg-color)', borderRadius: 12, marginBottom: 8}}>
+                  <div style={{minWidth: 0}}>
+                    <div>
+                      <span style={{fontWeight: 700, marginRight: 12}}>{student.name}</span>
+                      <span style={{fontSize: 13, color: 'var(--text-secondary)'}}>{student.id}</span>
+                    </div>
+                    {student.email && (
+                      <div style={{fontSize: 12, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis'}}>{student.email}</div>
+                    )}
+                  </div>
+                  <div style={{display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0}}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 8,
+                      background: student.uid ? 'var(--correct-soft)' : 'var(--muted-soft)',
+                      color: student.uid ? 'var(--correct)' : 'var(--text-tertiary)'
+                    }}>
+                      {student.uid ? '가입 완료' : '가입 전'}
+                    </span>
+                    <button onClick={() => handleDeleteStudent(student.id)} style={{background: 'transparent', border: 'none', color: 'var(--incorrect)', cursor: 'pointer'}}><Trash2 size={18} /></button>
+                  </div>
                 </div>
               ))}
             </div>

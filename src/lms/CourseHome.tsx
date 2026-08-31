@@ -1,12 +1,12 @@
 import { GraduationCap, PlayCircle, CheckCircle2, ArrowRight } from 'lucide-react';
 import type { Course, LessonProgress } from './types';
 import { countLessons, flattenLessons } from './types';
-import { ADMIN_ID } from '../team';
 
 interface Props {
   courses: Course[];
   lessonProgress: LessonProgress[];
   studentId: string;
+  isAdmin: boolean;
   onSelect: (course: Course) => void;
 }
 
@@ -36,8 +36,7 @@ function Ring({ pct, done }: { pct: number; done: boolean }) {
   );
 }
 
-export default function CourseHome({ courses, lessonProgress, studentId, onSelect }: Props) {
-  const isAdmin = studentId === ADMIN_ID;
+export default function CourseHome({ courses, lessonProgress, studentId, isAdmin, onSelect }: Props) {
   const completedIds = new Set(
     lessonProgress.filter((p) => p.status === 'completed').map((p) => p.lessonId),
   );
