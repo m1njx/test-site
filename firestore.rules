@@ -43,8 +43,10 @@ service cloud.firestore {
       // 로그인 화면에서 학번 존재 여부를 확인해야 하므로 읽기는 공개
       allow read: if true;
 
-      allow create, update: if
-        // 관리자는 명부를 관리할 수 있다 (단, uid 를 남의 것으로 바꿀 수는 없음)
+      // 명부에 새로 추가하는 건 관리자만 (콘솔에서 만드는 건 규칙과 무관하게 항상 가능)
+      allow create: if isAdmin();
+
+      allow update: if
         isAdmin()
         // 최초 가입 시 본인 uid 를 자기 문서에 기록하는 것만 허용.
         // 이미 uid 가 있으면 덮어쓸 수 없어 계정 탈취를 막는다.
@@ -109,6 +111,15 @@ service cloud.firestore {
                     && request.resource.data.studentId == resource.data.studentId
                     && request.resource.data.events.size() <= 500;
       allow delete: if false; // 증거 보전
+    }
+
+    /* --------------------------- 다른 앱 ---------------------------- */
+    // 같은 Firebase 프로젝트를 쓰는 별도 앱(티켓)의 기존 규칙 — 그대로 유지.
+    // 이 블록을 지우면 그 앱이 동작하지 않는다.
+    match /tickets/{ticketId} {
+      allow read, write: if request.auth != null
+                        || (resource != null && resource.data.userId == 'global-user-id')
+                        || (request.resource != null && request.resource.data.userId == 'global-user-id');
     }
 
     /* --------------------------- 나머지 차단 -------------------------- */
