@@ -55,4 +55,4 @@ npm run dev
 - **Publish Directory**: `dist`
 
 ---
-Developed by **AIM TEAM** (Main Developer: 강민제)
+Developed by **강민제**
