@@ -6,7 +6,17 @@ import { ADMIN_ID, type Student } from './team';
 import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress, verifyStudent } from './api';
 import Login from './Login';
 import Admin from './Admin';
+import CourseHome from './lms/CourseHome';
+import CoursePlayer, { type QuizLessonContext } from './lms/CoursePlayer';
+import ProctorShell from './lms/ProctorShell';
+import type { Course, LessonProgress } from './lms/types';
+import { getCourses, getLessonProgress, markQuizLesson, createProctorSession, finishProctorSession } from './lms/lmsApi';
 import './index.css';
+
+const genId = () =>
+  typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 declare global {
   interface Window {
@@ -80,8 +90,14 @@ export default function App() {
     fetchStudent();
   }, [loggedInUser]);
   
-  const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'quiz' | 'admin' | 'course'>('home');
   const [dynamicQuizzes, setDynamicQuizzes] = useState<Quiz[]>(quizzes);
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [lessonProgress, setLessonProgress] = useState<LessonProgress[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [courseCtx, setCourseCtx] = useState<QuizLessonContext | null>(null);
+  const [quizOrigin, setQuizOrigin] = useState<'home' | 'course'>('home');
+  const [proctorSessionId, setProctorSessionId] = useState<string | null>(null);
   const [dynamicTeam, setDynamicTeam] = useState<Student[]>([]);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
@@ -168,10 +184,27 @@ export default function App() {
     setAnnouncements(data);
   };
 
+  const loadCourses = useCallback(async () => {
+    setCourses(await getCourses());
+  }, []);
+
+  const loadLessonProgress = useCallback(async () => {
+    if (loggedInUser && loggedInUser !== ADMIN_ID) {
+      setLessonProgress(await getLessonProgress(loggedInUser));
+    } else {
+      setLessonProgress([]);
+    }
+  }, [loggedInUser]);
+
   useEffect(() => {
     loadQuizzes();
     loadAnnouncements();
-  }, []);
+    loadCourses();
+  }, [loadCourses]);
+
+  useEffect(() => {
+    loadLessonProgress();
+  }, [loadLessonProgress]);
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
@@ -227,11 +260,43 @@ export default function App() {
     }
   }, [loggedInUser, currentView, fetchProgress]);
 
+  // 퀴즈 답안 자동 저장 (early-return 위에 있어야 Hook 순서가 안정적)
+  useEffect(() => {
+    if (selectedQuiz && loggedInUser && Object.keys(answers).length > 0) {
+      localStorage.setItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`, JSON.stringify(answers));
+    }
+  }, [answers, selectedQuiz, loggedInUser]);
+
   if (!loggedInUser) return <Login onLogin={setLoggedInUser} />;
 
-  const startQuiz = (quiz: Quiz) => {
+  const startQuiz = async (quiz: Quiz, ctx?: QuizLessonContext) => {
     if (quiz.questions.length === 0) return;
-    
+
+    setCourseCtx(ctx ?? null);
+    setQuizOrigin(ctx ? 'course' : 'home');
+
+    // 부정행위 모니터링 세션 (관리자 제외, 코스 레슨은 proctored 옵션 존중)
+    const proctored = loggedInUser !== ADMIN_ID && (ctx ? ctx.proctored : true);
+    if (proctored && loggedInUser) {
+      try {
+        const sid = await createProctorSession({
+          id: genId(),
+          studentId: loggedInUser,
+          studentName: loggedInStudent?.name,
+          quizId: quiz.id,
+          quizTitle: quiz.title,
+          courseId: ctx?.courseId,
+          lessonId: ctx?.lessonId,
+        });
+        setProctorSessionId(sid);
+      } catch (e) {
+        console.warn('proctor session create failed', e);
+        setProctorSessionId(null);
+      }
+    } else {
+      setProctorSessionId(null);
+    }
+
     let quizToStart = quiz;
     if (quiz.shuffleQuestions) {
       const shuffled = [...quiz.questions].sort(() => Math.random() - 0.5);
@@ -265,8 +330,20 @@ export default function App() {
   };
 
   const goHome = () => {
-    setCurrentView('home');
+    // 제출 없이 나가는 경우 세션을 미제출로 종료
+    if (proctorSessionId && !showResults) {
+      finishProctorSession(proctorSessionId, { submitted: false });
+    }
+    setProctorSessionId(null);
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     setSelectedQuiz(null);
+    if (quizOrigin === 'course' && selectedCourse) {
+      loadLessonProgress();
+      setCurrentView('course');
+    } else {
+      setCourseCtx(null);
+      setCurrentView('home');
+    }
   };
 
   const handleLogout = () => {
@@ -275,13 +352,7 @@ export default function App() {
     setCurrentView('home');
   };
 
-  useEffect(() => {
-    if (selectedQuiz && loggedInUser && Object.keys(answers).length > 0) {
-      localStorage.setItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`, JSON.stringify(answers));
-    }
-  }, [answers, selectedQuiz, loggedInUser]);
-
-  const resetQuiz = () => {
+  const resetQuiz = async () => {
     setCurrentQuestionIdx(0);
     setAnswers({});
     setResults({});
@@ -290,6 +361,23 @@ export default function App() {
     if (selectedQuiz && loggedInUser) {
       localStorage.removeItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`);
     }
+    // 재응시: 새 모니터링 세션 시작 (직전 응시가 모니터링 대상이었을 때)
+    const wasProctored = loggedInUser !== ADMIN_ID && (courseCtx ? courseCtx.proctored : true);
+    if (wasProctored && selectedQuiz && loggedInUser) {
+      try {
+        const sid = await createProctorSession({
+          id: genId(),
+          studentId: loggedInUser,
+          studentName: loggedInStudent?.name,
+          quizId: selectedQuiz.id,
+          quizTitle: selectedQuiz.title,
+          courseId: courseCtx?.courseId,
+          lessonId: courseCtx?.lessonId,
+        });
+        setProctorSessionId(sid);
+      } catch { setProctorSessionId(null); }
+    }
+    if (selectedQuiz?.timeLimit) setTimeLeft(selectedQuiz.timeLimit * 60);
   };
 
   const gradeQuiz = async () => {
@@ -359,6 +447,30 @@ export default function App() {
       await fetchProgress();
       localStorage.removeItem(`aim_quiz_answers_${selectedQuiz!.id}_${loggedInUser}`);
     } catch (e) { alert("결과 저장 실패"); }
+
+    // 코스 퀴즈 레슨이면 이수 여부 기록
+    if (courseCtx && loggedInUser) {
+      try {
+        await markQuizLesson({
+          studentId: loggedInUser,
+          courseId: courseCtx.courseId,
+          lessonId: courseCtx.lessonId,
+          score: correctCount,
+          total: questions.length,
+          passScore: courseCtx.passScore,
+          attemptId: proctorSessionId ?? undefined,
+        });
+        await loadLessonProgress();
+      } catch (e) { console.warn('markQuizLesson failed', e); }
+    }
+
+    // 부정행위 세션 종료
+    if (proctorSessionId) {
+      try {
+        await finishProctorSession(proctorSessionId, { submitted: true, score: correctCount, total: questions.length });
+      } catch (e) { console.warn('finishProctorSession failed', e); }
+    }
+
     setIsGrading(false);
     setShowResults(true);
   };
@@ -387,6 +499,18 @@ export default function App() {
       
       {currentView === 'admin' && (
         <Admin onBack={() => setCurrentView('home')} dynamicQuizzes={dynamicQuizzes} onRefresh={loadQuizzes} dynamicTeam={dynamicTeam} onRefreshTeam={loadTeam} />
+      )}
+
+      {currentView === 'course' && selectedCourse && (
+        <CoursePlayer
+          course={selectedCourse}
+          studentId={loggedInUser}
+          lessonProgress={lessonProgress}
+          quizzesById={Object.fromEntries(dynamicQuizzes.map((q) => [q.id, q]))}
+          onBack={() => { setSelectedCourse(null); setCurrentView('home'); loadLessonProgress(); }}
+          onStartQuizLesson={(quiz, ctx) => { startQuiz(quiz, ctx); }}
+          onVideoCompleted={loadLessonProgress}
+        />
       )}
 
       {currentView === 'home' && (
@@ -516,6 +640,13 @@ export default function App() {
               </div>
             </div>
           )}
+
+          <CourseHome
+            courses={courses}
+            lessonProgress={lessonProgress}
+            studentId={loggedInUser}
+            onSelect={(c) => { setSelectedCourse(c); setCurrentView('course'); }}
+          />
 
           <h1 className="home-title">일일 퀴즈 점검</h1>
           <p className="home-subtitle">날짜별로 할당된 문제를 풀고 실력을 점검하세요.</p>
@@ -666,7 +797,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <>
+            <ProctorShell active={!!proctorSessionId} sessionId={proctorSessionId}>
               <header className="app-header" style={{padding: '20px 0'}}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16}}>
                   <button onClick={goHome} style={{background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--text-secondary)'}}><Home size={18} /> 나가기</button>
@@ -745,7 +876,7 @@ export default function App() {
                 <button onClick={() => setCurrentQuestionIdx(v => v - 1)} disabled={currentQuestionIdx === 0} className="btn btn-secondary">이전</button>
                 <button onClick={() => currentQuestionIdx === totalQuestions - 1 ? setShowConfirmModal(true) : setCurrentQuestionIdx(v => v + 1)} disabled={!isAnswered || isGrading} className="btn btn-primary" style={{minWidth: 120}}>{isGrading ? <Loader2 className="animate-spin" /> : (currentQuestionIdx === totalQuestions - 1 ? '제출하기' : '다음')}</button>
               </footer>
-            </>
+            </ProctorShell>
           )}
         </div>
       )}

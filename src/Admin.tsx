@@ -13,9 +13,12 @@ interface AdminProps {
 }
 
 import { fetchAiPreview, callGeminiWithFallback } from './gemini';
+import CourseBuilder from './lms/admin/CourseBuilder';
+import CompletionBoard from './lms/admin/CompletionBoard';
+import ProctorLogBoard from './lms/admin/ProctorLogBoard';
 
 export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, onRefreshTeam }: AdminProps) {
-  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team' | 'stats' | 'announcements'>('results');
+  const [activeTab, setActiveTab] = useState<'results' | 'create' | 'team' | 'stats' | 'announcements' | 'courses' | 'completion' | 'proctor'>('results');
   const [allStats, setAllStats] = useState<Progress[]>([]);
   const [announcements, setAnnouncements] = useState<{id: string, text: string, date: number}[]>([]);
   const [newAnnouncement, setNewAnnouncement] = useState('');
@@ -358,6 +361,9 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
           <button onClick={() => { setActiveTab('create'); }} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'create' ? 'var(--surface)' : 'transparent', color: activeTab === 'create' ? 'var(--primary)' : 'var(--text-secondary)'}}>퀴즈 생성</button>
           <button onClick={() => setActiveTab('team')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'team' ? 'var(--surface)' : 'transparent', color: activeTab === 'team' ? 'var(--primary)' : 'var(--text-secondary)'}}>팀원 관리</button>
           <button onClick={() => setActiveTab('announcements')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'announcements' ? 'var(--surface)' : 'transparent', color: activeTab === 'announcements' ? 'var(--primary)' : 'var(--text-secondary)'}}>공지</button>
+          <button onClick={() => setActiveTab('courses')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'courses' ? 'var(--surface)' : 'transparent', color: activeTab === 'courses' ? 'var(--primary)' : 'var(--text-secondary)'}}>코스</button>
+          <button onClick={() => setActiveTab('completion')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'completion' ? 'var(--surface)' : 'transparent', color: activeTab === 'completion' ? 'var(--primary)' : 'var(--text-secondary)'}}>이수현황</button>
+          <button onClick={() => setActiveTab('proctor')} style={{padding: '8px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: activeTab === 'proctor' ? 'var(--surface)' : 'transparent', color: activeTab === 'proctor' ? 'var(--incorrect)' : 'var(--text-secondary)'}}>부정행위</button>
         </div>
       </header>
 
@@ -1116,6 +1122,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
             </div>
           </div>
         )}
+
+        {activeTab === 'courses' && <CourseBuilder quizzes={dynamicQuizzes} team={dynamicTeam} />}
+        {activeTab === 'completion' && <CompletionBoard team={dynamicTeam} />}
+        {activeTab === 'proctor' && <ProctorLogBoard team={dynamicTeam} />}
       </div>
     </div>
   );
