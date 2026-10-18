@@ -561,6 +561,7 @@ export default function App() {
 
     let correctCount = 0;
     let serverGraded = false;
+    let serverGradedResult: { score: number; total: number; submissionToken?: string; attemptId?: string } | null = null;
     const attemptId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     // 1. 서버 사이드 권위 있는 채점 시도 (클라이언트 정답 유출 방지 및 멱등성 보장)
@@ -576,6 +577,7 @@ export default function App() {
         }
         correctCount = serverResult.score;
         serverGraded = true;
+        serverGradedResult = serverResult;
         setGradingProgress({ done: questions.length, total: questions.length });
       }
     } catch (e) {
@@ -681,6 +683,10 @@ export default function App() {
           {
             deadline: fullQuiz?.deadline,
             maxAttempts: fullQuiz?.maxAttempts,
+            authoritativeScore: serverGradedResult ? serverGradedResult.score : undefined,
+            authoritativeTotal: serverGradedResult ? serverGradedResult.total : undefined,
+            attemptId: serverGradedResult?.attemptId || attemptId,
+            submissionToken: serverGradedResult?.submissionToken,
           }
         );
         await fetchProgress();

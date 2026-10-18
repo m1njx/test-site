@@ -1,11 +1,9 @@
-import { db, isMock } from './firebase';
+import { db, auth, isMock } from './firebase';
 import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy, getDoc } from 'firebase/firestore';
 import type { Quiz, QuizAnswerDocument } from './data';
 import type { Student } from './team';
 
 const SERVER_URL = (import.meta.env.VITE_VIDEO_SERVER_URL || '').replace(/\/$/, '');
-const UPLOAD_TOKEN = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
-
 
 /**
  * Firebase 미설정(=isMock) 시 사용하는 로컬 저장소.
@@ -64,6 +62,8 @@ export interface Progress {
   detailedResults?: Record<string, unknown>;
   bestScore?: number;
   attempts?: number;
+  attemptId?: string;
+  submissionToken?: string;
 }
 
 // Cache for Firebase results to improve performance
@@ -80,6 +80,10 @@ const CACHE_TTL = 1000 * 30; // 30 seconds cache
 export interface SaveScoreOptions {
   deadline?: string;
   maxAttempts?: number;
+  authoritativeScore?: number;
+  authoritativeTotal?: number;
+  attemptId?: string;
+  submissionToken?: string;
 }
 
 export async function saveScore(
@@ -98,6 +102,14 @@ export async function saveScore(
   }
   if (score < 0 || total < 0 || score > total) {
     throw new Error(`유효하지 않은 점수 범위입니다 (점수: ${score}, 총점: ${total}).`);
+  }
+
+  // 공식 채점 결과와 점수 위변조 방지 검증 (TEST D)
+  if (typeof options?.authoritativeScore === 'number' && score !== options.authoritativeScore) {
+    throw new Error(`공식 채점 결과와 일치하지 않는 점수(${score}점)는 저장할 수 없습니다 (위변조 차단).`);
+  }
+  if (typeof options?.authoritativeTotal === 'number' && total !== options.authoritativeTotal) {
+    throw new Error(`공식 채점 총점과 일치하지 않는 총점(${total}점)은 저장할 수 없습니다.`);
   }
 
   // 마감 기한 검증 (네트워크 지연 감안 1분 유예 허용)
@@ -140,6 +152,12 @@ export async function saveScore(
   // Firestore는 undefined 필드를 거부하므로 값이 있을 때만 추가
   if (cleanedResults && Object.keys(cleanedResults).length > 0) {
     data.detailedResults = cleanedResults;
+  }
+  if (options?.attemptId) {
+    data.attemptId = options.attemptId;
+  }
+  if (options?.submissionToken) {
+    data.submissionToken = options.submissionToken;
   }
 
   try {
@@ -348,15 +366,13 @@ export async function saveQuiz(quiz: Quiz) {
     };
     await setDoc(doc(db, 'quizAnswers', quiz.id), answersData);
 
-    // video-server 정답 키 저장소 동기화 (설정 시)
-    if (SERVER_URL && UPLOAD_TOKEN) {
+    // video-server 정답 키 저장소 동기화 (관리자 인증 기반, 번들 노출 토큰 분리)
+    if (SERVER_URL) {
       try {
+        const headers = await getAdminAuthHeaders();
         await fetch(`${SERVER_URL}/api/quiz-keys`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-upload-token': UPLOAD_TOKEN,
-          },
+          headers,
           body: JSON.stringify({
             quizId: quiz.id,
             title: quiz.title,
@@ -377,6 +393,29 @@ export async function saveQuiz(quiz: Quiz) {
   }
 }
 
+/** 관리자 전용 서버 인증 헤더 생성기 (VITE_VIDEO_UPLOAD_TOKEN 번들 노출 방지) */
+async function getAdminAuthHeaders(adminTokenOrKey?: string): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (adminTokenOrKey) {
+    headers['x-admin-key'] = adminTokenOrKey;
+    return headers;
+  }
+  if (auth?.currentUser) {
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+        return headers;
+      }
+    } catch {}
+  }
+  const viteAdminKey = (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_API_KEY;
+  if (viteAdminKey) {
+    headers['x-admin-key'] = viteAdminKey;
+  }
+  return headers;
+}
+
 /**
  * 학생 답안을 서버에 전송하여 권위 있게 채점 (클라이언트 정답 노출 방지 및 멱등성 보장)
  */
@@ -387,6 +426,7 @@ export async function submitForServerGrading(
     studentId?: string;
     attemptId?: string;
     currentAttempts?: number;
+    authToken?: string;
   }
 ): Promise<{
   ok: boolean;
@@ -396,12 +436,24 @@ export async function submitForServerGrading(
   results: Record<string, boolean>;
   detailedResults?: Record<string, unknown>;
   idempotent?: boolean;
+  attemptId?: string;
+  status?: string;
+  submissionToken?: string;
 } | null> {
   if (!SERVER_URL) return null;
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    let token = opts?.authToken;
+    if (!token && auth?.currentUser) {
+      token = await auth.currentUser.getIdToken().catch(() => undefined);
+    }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const res = await fetch(`${SERVER_URL}/api/grade-submission`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         quizId,
         answers,
@@ -424,15 +476,13 @@ export async function submitForServerGrading(
 /**
  * 관리자 로그인/화면 진입 시 서버(Render Sleep/Wake 대비)에 퀴즈 정답 키 일괄 재동기화
  */
-export async function syncAllQuizKeysToServer(quizzes: Quiz[]): Promise<boolean> {
-  if (!SERVER_URL || !UPLOAD_TOKEN || !Array.isArray(quizzes) || quizzes.length === 0) return false;
+export async function syncAllQuizKeysToServer(quizzes: Quiz[], adminTokenOrKey?: string): Promise<boolean> {
+  if (!SERVER_URL || !Array.isArray(quizzes) || quizzes.length === 0) return false;
   try {
+    const headers = await getAdminAuthHeaders(adminTokenOrKey);
     const res = await fetch(`${SERVER_URL}/api/quiz-keys`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-upload-token': UPLOAD_TOKEN,
-      },
+      headers,
       body: JSON.stringify({
         quizzes: quizzes.map((q) => ({
           id: q.id,

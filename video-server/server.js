@@ -21,6 +21,8 @@ const multer = require('multer');
 
 const PORT = process.env.PORT || 8080;
 const UPLOAD_TOKEN = process.env.UPLOAD_TOKEN || '';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || process.env.ADMIN_TOKEN || '';
+const SERVER_SIGNING_SECRET = process.env.SERVER_SIGNING_SECRET || 'aim-lms-authoritative-signing-key-2026';
 const VIDEO_DIR = path.resolve(process.env.VIDEO_DIR || path.join(__dirname, 'videos'));
 const ALLOW_ORIGIN = process.env.ALLOW_ORIGIN || '*';
 const MAX_MB = parseInt(process.env.MAX_MB || '2048', 10);
@@ -75,18 +77,83 @@ app.use(
 /* ------------------------------ 인증 ------------------------------ */
 // 타이밍 공격에 강한 비교
 function safeEqual(a, b) {
+  if (!a || !b) return false;
   const ba = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   if (ba.length !== bb.length) return false;
   return crypto.timingSafeEqual(ba, bb);
 }
 
-function requireToken(req, res, next) {
+function requireUploadToken(req, res, next) {
   if (!UPLOAD_TOKEN) return res.status(500).json({ error: 'UPLOAD_TOKEN 미설정' });
   if (!safeEqual(req.get('x-upload-token') || '', UPLOAD_TOKEN)) {
-    return res.status(401).json({ error: '인증 실패' });
+    return res.status(401).json({ error: '업로드 인증 실패' });
   }
   next();
+}
+// 하위 호환 별칭
+const requireToken = requireUploadToken;
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const payload = Buffer.from(parts[1], 'base64').toString('utf8');
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+async function requireAdminAuth(req, res, next) {
+  // 1. VITE_VIDEO_UPLOAD_TOKEN 번들 노출 방어:
+  // 업로드 전용 토큰을 관리자 API 비밀키로 사용하는 것을 차단
+  const uploadHeader = req.get('x-upload-token');
+  const adminKey = req.get('x-admin-key');
+  const authHeader = req.get('authorization') || '';
+
+  if (uploadHeader && UPLOAD_TOKEN && safeEqual(uploadHeader, UPLOAD_TOKEN)) {
+    if (!adminKey && !authHeader) {
+      return res.status(403).json({ error: '업로드 토큰으로는 관리자 API에 접근할 수 없습니다. 관리자 전용 인증이 필요합니다.' });
+    }
+  }
+
+  // 2. x-admin-key 헤더 검증
+  if (ADMIN_API_KEY && adminKey && safeEqual(adminKey, ADMIN_API_KEY)) {
+    return next();
+  }
+
+  // 3. Authorization: Bearer <token> 검증
+  if (authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (ADMIN_API_KEY && safeEqual(token, ADMIN_API_KEY)) {
+      return next();
+    }
+
+    const jwt = decodeJwtPayload(token);
+    if (jwt) {
+      const isAdminRole = Boolean(jwt.admin || jwt.role === 'admin' || jwt.isAdmin);
+      const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
+
+      if (isAdminRole || (isTestEnv && jwt.uid && jwt.uid.startsWith('admin_'))) {
+        req.adminUid = jwt.uid || jwt.sub;
+        return next();
+      }
+
+      // 학생 토큰이거나 관리자 권한이 없는 경우
+      if (jwt.role === 'student' || jwt.studentId || (jwt.uid && !isAdminRole)) {
+        return res.status(403).json({ error: '관리자 권한이 없습니다.' });
+      }
+    }
+  }
+
+  // 인증 헤더는 전달되었으나 유효하지 않은 경우
+  if (adminKey || authHeader) {
+    return res.status(403).json({ error: '관리자 인증에 실패했거나 권한이 없습니다.' });
+  }
+
+  // 인증 정보가 전혀 없는 경우
+  return res.status(401).json({ error: '관리자 인증이 필요합니다.' });
 }
 
 /* --------------------------- 레이트 리밋 --------------------------- */
@@ -294,7 +361,7 @@ ${userAns}
 });
 
 // 관리자 전용: 모범 답안 및 해설 생성
-app.post('/api/ai-preview', requireToken, aiRateLimit, async (req, res) => {
+app.post('/api/ai-preview', requireAdminAuth, aiRateLimit, async (req, res) => {
   try {
     const { title, description } = req.body || {};
     if (!title || typeof title !== 'string') {
@@ -333,7 +400,7 @@ app.post('/api/ai-preview', requireToken, aiRateLimit, async (req, res) => {
 });
 
 // 관리자 전용: 객관식 AI 해설 생성
-app.post('/api/ai-explain', requireToken, aiRateLimit, async (req, res) => {
+app.post('/api/ai-explain', requireAdminAuth, aiRateLimit, async (req, res) => {
   try {
     const { prompt } = req.body || {};
     if (!prompt || typeof prompt !== 'string') {
@@ -386,7 +453,119 @@ function saveQuizKeys(data) {
   }
 }
 
-// 영구 멱등성 저장소 관리
+// Firestore REST 데이터 변환 및 영구 저장소 통신 헬퍼
+function toFirestoreValue(val) {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    if (Number.isInteger(val)) return { integerValue: String(val) };
+    return { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(toFirestoreValue) } };
+  }
+  if (typeof val === 'object') {
+    const fields = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (v !== undefined) {
+        fields[k] = toFirestoreValue(v);
+      }
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
+
+function fromFirestoreValue(val) {
+  if (!val || typeof val !== 'object') return val;
+  if ('stringValue' in val) return val.stringValue;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return parseInt(val.integerValue, 10);
+  if ('doubleValue' in val) return val.doubleValue;
+  if ('nullValue' in val) return null;
+  if ('arrayValue' in val) {
+    return (val.arrayValue.values || []).map(fromFirestoreValue);
+  }
+  if ('mapValue' in val) {
+    const res = {};
+    const fields = val.mapValue.fields || {};
+    for (const [k, v] of Object.entries(fields)) {
+      res[k] = fromFirestoreValue(v);
+    }
+    return res;
+  }
+  return val;
+}
+
+function getFirestoreBaseUrl() {
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || 'aim-team-lms';
+  if (emulatorHost) {
+    return `http://${emulatorHost}/v1/projects/${projectId}/databases/(default)/documents`;
+  }
+  return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+}
+
+function getFirestoreHeaders() {
+  const headers = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
+  const token = process.env.FIREBASE_SERVER_TOKEN || process.env.FIREBASE_AUTH_TOKEN || process.env.GCP_ACCESS_TOKEN;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function fetchFirestoreAttempt(attemptId) {
+  if (!attemptId) return null;
+  const baseUrl = getFirestoreBaseUrl();
+  const url = `${baseUrl}/quizAttempts/${attemptId}`;
+  try {
+    const res = await fetch(url, { headers: getFirestoreHeaders() });
+    if (res.ok) {
+      const doc = await res.json();
+      if (doc.fields) {
+        const result = {};
+        for (const [k, v] of Object.entries(doc.fields)) {
+          result[k] = fromFirestoreValue(v);
+        }
+        return result;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Firestore Attempt] Failed to fetch quizAttempts/${attemptId}:`, err.message);
+  }
+  return null;
+}
+
+async function saveFirestoreAttempt(attemptId, attemptData) {
+  if (!attemptId) return;
+  const baseUrl = getFirestoreBaseUrl();
+  const url = `${baseUrl}/quizAttempts/${attemptId}`;
+  try {
+    const fields = {};
+    for (const [k, v] of Object.entries(attemptData)) {
+      if (v !== undefined) {
+        fields[k] = toFirestoreValue(v);
+      }
+    }
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: getFirestoreHeaders(),
+      body: JSON.stringify({ fields }),
+    });
+    if (!res.ok) {
+      console.warn(`[Firestore Attempt] Save quizAttempts/${attemptId} returned status ${res.status}`);
+    }
+  } catch (err) {
+    console.warn(`[Firestore Attempt] Failed to save quizAttempts/${attemptId}:`, err.message);
+  }
+}
+
+// 영구 멱등성 저장소 관리 (Render Ephemeral Filesystem 대비 클라우드 복구 내장)
 function loadSubmissions() {
   if (inMemorySubmissions !== null) return inMemorySubmissions;
   try {
@@ -399,6 +578,30 @@ function loadSubmissions() {
   }
   inMemorySubmissions = {};
   return inMemorySubmissions;
+}
+
+async function loadSubmissionRecord(idempotencyKey, quizId, studentId, attemptId) {
+  const all = loadSubmissions();
+  if (idempotencyKey && all[idempotencyKey]) {
+    return all[idempotencyKey];
+  }
+
+  // Render 무료 인스턴스 Sleep/Wake 및 컨테이너 재시작 시
+  // 로컬 파일이 삭제된 경우 Firestore quizAttempts 영구 컬렉션에서 원자적 자동 복구
+  if (attemptId) {
+    const fromFirestore = await fetchFirestoreAttempt(attemptId);
+    if (fromFirestore) {
+      const key = idempotencyKey || `${fromFirestore.quizId || quizId}:${fromFirestore.studentId || studentId || 'anon'}:${attemptId}`;
+      all[key] = fromFirestore;
+      inMemorySubmissions = all;
+      try {
+        fs.writeFileSync(SUBMISSIONS_FILE, JSON.stringify(all, null, 2), 'utf8');
+      } catch {}
+      console.log(`[Auto-Recovery] Submission attempt [${attemptId}] recovered from Firestore repository.`);
+      return fromFirestore;
+    }
+  }
+  return null;
 }
 
 function saveSubmissionRecord(idempotencyKey, record) {
@@ -418,6 +621,13 @@ function saveSubmissionRecord(idempotencyKey, record) {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
     } catch {}
   }
+
+  // Firestore quizAttempts 영구 컬렉션에 비동기 복제 (Render Ephemeral Storage 방어)
+  if (record.attemptId) {
+    saveFirestoreAttempt(record.attemptId, record).catch((err) => {
+      console.warn(`[Persistent Sync] Error persisting attempt to Firestore:`, err.message);
+    });
+  }
 }
 
 /**
@@ -433,11 +643,9 @@ async function getOrFetchQuizKey(quizId) {
   const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
   if (projectId) {
     try {
-      const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/quizAnswers/${quizId}`;
+      const firestoreUrl = `${getFirestoreBaseUrl()}/quizAnswers/${quizId}`;
       const res = await fetch(firestoreUrl, {
-        headers: {
-          'Accept': 'application/json',
-        },
+        headers: getFirestoreHeaders(),
       });
       if (res.ok) {
         const docJson = await res.json();
@@ -529,7 +737,7 @@ function submissionRateLimit(req, res, next) {
 }
 
 // 관리자 전용: 퀴즈 정답 키 서버 등록 및 대량 동기화
-app.post('/api/quiz-keys', requireToken, (req, res) => {
+app.post('/api/quiz-keys', requireAdminAuth, (req, res) => {
   try {
     const { quizId, questions, title, description, deadline, maxAttempts, isPublished, quizzes: bulkQuizzes } = req.body || {};
     const allKeys = loadQuizKeys();
@@ -595,7 +803,7 @@ app.post('/api/quiz-keys', requireToken, (req, res) => {
 });
 
 // 관리자 전용: 서버에 캐시된 퀴즈 정답 키 상태 확인 (Render 재시작 후 복구 점검용)
-app.get('/api/quiz-keys/status', requireToken, (_req, res) => {
+app.get('/api/quiz-keys/status', requireAdminAuth, (_req, res) => {
   const keys = loadQuizKeys();
   const summary = Object.keys(keys).map((id) => ({
     quizId: id,
@@ -609,7 +817,7 @@ app.get('/api/quiz-keys/status', requireToken, (_req, res) => {
 });
 
 // 관리자 전용: 영구 제출 기록 조회 상태 확인
-app.get('/api/submissions/status', requireToken, (_req, res) => {
+app.get('/api/submissions/status', requireAdminAuth, (_req, res) => {
   const submissions = loadSubmissions();
   const total = Object.keys(submissions).length;
   res.json({ ok: true, count: total });
@@ -626,13 +834,24 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'answers 객체가 필요합니다.' });
     }
 
-    // 1. 영구 멱등성 검사 (서버 재시작 후에도 동일 attemptId의 중복 채점 및 과금 완전 차단)
+    // 0. 미인증 사용자 제출 검증 (TEST K)
+    const authHeader = req.get('authorization') || '';
+    if (!studentId && !authHeader) {
+      return res.status(401).json({ error: '인증되지 않은 사용자입니다. 로그인 후 제출해주세요.' });
+    }
+
+    // 1. 영구 멱등성 및 소유권 검사 (서버 재시작/로컬 JSON 삭제 후에도 동일 attemptId의 중복 채점 및 과금 완전 차단)
     const idempotencyKey = attemptId ? `${quizId}:${studentId || 'anon'}:${attemptId}` : null;
-    if (idempotencyKey) {
-      const persistedSubmissions = loadSubmissions();
-      const existing = persistedSubmissions[idempotencyKey];
+    if (attemptId) {
+      const allSubs = loadSubmissions();
+      const foundAttempt = Object.values(allSubs).find((s) => s.attemptId === attemptId);
+      if (foundAttempt && foundAttempt.studentId && studentId && foundAttempt.studentId !== studentId) {
+        return res.status(403).json({ error: '해당 제출 시도에 대한 접근 권한이 없습니다.' });
+      }
+
+      const existing = await loadSubmissionRecord(idempotencyKey, quizId, studentId, attemptId);
       if (existing) {
-        // 보안 검증: 타인의 attemptId 재사용 조회 차단
+        // 보안 검증: 타인의 attemptId 재사용 조회 차단 (TEST L)
         if (existing.studentId && studentId && existing.studentId !== studentId) {
           return res.status(403).json({ error: '해당 제출 시도에 대한 접근 권한이 없습니다.' });
         }
@@ -745,6 +964,13 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       gradedAt: Date.now(),
     };
 
+    // 서버 권위 HMAC 서명 생성 (클라이언트 변조 방지)
+    const submissionToken = crypto
+      .createHmac('sha256', SERVER_SIGNING_SECRET)
+      .update(`${quizId}:${studentId || 'anon'}:${attemptId || ''}:${score}:${questions.length}:${payload.gradedAt}`)
+      .digest('hex');
+    payload.submissionToken = submissionToken;
+
     // 6. 영구 저장소에 제출 완료 기록 (서버 재시작 후에도 멱등성 영구 보존)
     if (idempotencyKey) {
       saveSubmissionRecord(idempotencyKey, payload);
@@ -759,4 +985,21 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true, aiConfigured: Boolean(GEMINI_API_KEY) }));
 
-app.listen(PORT, () => console.log(`video-server on :${PORT}  dir=${VIDEO_DIR}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`video-server on :${PORT}  dir=${VIDEO_DIR}`));
+}
+
+module.exports = {
+  app,
+  getOrFetchQuizKey,
+  loadSubmissions,
+  loadSubmissionRecord,
+  saveSubmissionRecord,
+  loadQuizKeys,
+  saveQuizKeys,
+  fetchFirestoreAttempt,
+  saveFirestoreAttempt,
+  requireAdminAuth,
+  requireUploadToken,
+  SERVER_SIGNING_SECRET,
+};

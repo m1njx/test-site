@@ -27,8 +27,12 @@ rules_version = '2';
 //
 // 8. proctorSessions/{sessionId}
 //    부정행위 감지 로그. Append-Only 보장(이벤트 크기 축소 차단), 삭제 절대 불가.
+//    - events/{eventId}: 개별 부정행위 이벤트 서브컬렉션. 불변(수정/삭제 불가), 본인/관리자 읽기, 본인 생성.
 //
-// 9. tickets/{ticketId}
+// 9. quizAttempts/{attemptId}
+//    시험 응시 및 채점 결과 불변 기록. 본인/관리자 읽기, 본인/관리자 생성, 관리자만 수정 가능, 삭제 절대 불가.
+//
+// 10. tickets/{ticketId}
 //    동일 Firebase 프로젝트를 공유하는 별도 티켓 앱 호환 규칙 보존.
 // ===============================================================
 
@@ -183,6 +187,41 @@ service cloud.firestore {
           && (!('total' in data) || (data.total is int && data.total >= 0));
     }
 
+    function isValidProctorEvent(data) {
+      return data.keys().hasAll(['type', 'ts'])
+          && data.keys().hasOnly(['type', 'ts', 'detail', 'sessionId', 'id'])
+          && data.type is string && data.type.size() >= 1 && data.type.size() <= 100
+          && (data.ts is int || data.ts is timestamp)
+          && (!('detail' in data) || (data.detail is string && data.detail.size() <= 1000))
+          && (!('sessionId' in data) || (data.sessionId is string && data.sessionId.size() <= 100))
+          && (!('id' in data) || (data.id is string && data.id.size() <= 100));
+    }
+
+    function isValidQuizAttempt(attemptId, data) {
+      return data.keys().hasAll(['attemptId', 'studentId', 'quizId', 'status', 'score', 'total', 'gradedAt'])
+          && data.keys().hasOnly(['attemptId', 'studentId', 'quizId', 'status', 'score', 'total', 'gradedAt', 'percentage', 'results', 'detailedResults', 'answers', 'ok', 'courseId', 'lessonId', 'proctorSessionId', 'submittedAt', 'timestamp', 'attempts'])
+          && data.attemptId == attemptId
+          && data.attemptId is string && data.attemptId.size() >= 1 && data.attemptId.size() <= 100
+          && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
+          && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
+          && data.status is string && data.status.size() >= 1 && data.status.size() <= 50
+          && (data.score is int || data.score is number) && data.score >= 0
+          && (data.total is int || data.total is number) && data.total >= 0
+          && data.score <= data.total
+          && (data.gradedAt is int || data.gradedAt is timestamp)
+          && (!('percentage' in data) || (data.percentage is number && data.percentage >= 0 && data.percentage <= 100))
+          && (!('ok' in data) || data.ok is bool)
+          && (!('results' in data) || (data.results is map && data.results.size() <= 200))
+          && (!('detailedResults' in data) || (data.detailedResults is map && data.detailedResults.size() <= 200))
+          && (!('answers' in data) || (data.answers is map && data.answers.size() <= 200))
+          && (!('courseId' in data) || (data.courseId is string && data.courseId.size() <= 100))
+          && (!('lessonId' in data) || (data.lessonId is string && data.lessonId.size() <= 100))
+          && (!('proctorSessionId' in data) || (data.proctorSessionId is string && data.proctorSessionId.size() <= 100))
+          && (!('submittedAt' in data) || (data.submittedAt is int || data.submittedAt is timestamp))
+          && (!('timestamp' in data) || (data.timestamp is int || data.timestamp is timestamp))
+          && (!('attempts' in data) || (data.attempts is int && data.attempts >= 1));
+    }
+
     // ===============================================================
     // Rules by Collection
     // ===============================================================
@@ -291,6 +330,25 @@ service cloud.firestore {
                     && request.resource.data.startedAt == resource.data.startedAt
                     && request.resource.data.events.size() >= resource.data.events.size();
       allow delete: if false; // 증거 보전
+
+      /* --- 부정행위 개별 이벤트 서브컬렉션 (True Append-Only Audit Log) --- */
+      match /events/{eventId} {
+        allow read: if isAdmin()
+                    || ownsStudent(get(/databases/$(database)/documents/proctorSessions/$(sessionId)).data.studentId);
+        allow create: if ownsStudent(get(/databases/$(database)/documents/proctorSessions/$(sessionId)).data.studentId)
+                      && isValidProctorEvent(request.resource.data);
+        allow update: if false; // strictly immutable
+        allow delete: if false; // evidence deletion strictly forbidden
+      }
+    }
+
+    /* -------------------------- 시험 응시 기록 ------------------------- */
+    match /quizAttempts/{attemptId} {
+      allow read: if isAdmin() || ownsStudent(resource.data.studentId);
+      allow create: if (isAdmin() || (ownsStudent(request.resource.data.studentId) && request.resource.data.attemptId == attemptId))
+                    && isValidQuizAttempt(attemptId, request.resource.data);
+      allow update: if isAdmin() && isValidQuizAttempt(attemptId, request.resource.data);
+      allow delete: if false; // 시험 응시 기록 삭제 절대 불가
     }
 
     /* --------------------------- 다른 앱 ---------------------------- */
