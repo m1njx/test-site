@@ -45,7 +45,7 @@ function createTestJwt(payload) {
   const header = { alg: 'HS256', typ: 'JWT' };
   const h = base64Url(header);
   const p = base64Url(payload);
-  const sig = crypto.createHmac('sha256', 'test-secret').update(`${h}.${p}`).digest('base64url');
+  const sig = crypto.createHmac('sha256', SERVER_SIGNING_SECRET).update(`${h}.${p}`).digest('base64url');
   return `${h}.${p}.${sig}`;
 }
 

@@ -30,7 +30,7 @@ rules_version = '2';
 //    - events/{eventId}: 개별 부정행위 이벤트 서브컬렉션. 불변(수정/삭제 불가), 본인/관리자 읽기, 본인 생성.
 //
 // 9. quizAttempts/{attemptId}
-//    시험 응시 및 채점 결과 불변 기록. 본인/관리자 읽기, 본인/관리자 생성, 관리자만 수정 가능, 삭제 절대 불가.
+//    시험 응시 및 채점 결과 불변 기록. 본인/관리자 읽기, 관리자만 생성/수정 가능 (학생 직접 작성 차단), 삭제 절대 불가.
 //
 // 10. tickets/{ticketId}
 //    동일 Firebase 프로젝트를 공유하는 별도 티켓 앱 호환 규칙 보존.
@@ -132,7 +132,7 @@ service cloud.firestore {
 
     function isValidProgress(docId, data) {
       return data.keys().hasAll(['studentId', 'quizId', 'score', 'total', 'timestamp'])
-          && data.keys().hasOnly(['studentId', 'quizId', 'score', 'total', 'timestamp', 'detailedResults', 'bestScore', 'attempts'])
+          && data.keys().hasOnly(['studentId', 'quizId', 'score', 'total', 'timestamp', 'detailedResults', 'bestScore', 'attempts', 'attemptId', 'submissionToken'])
           && docId == data.studentId + '_' + data.quizId
           && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
           && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
@@ -142,7 +142,9 @@ service cloud.firestore {
           && (data.timestamp is int || data.timestamp is timestamp)
           && (!('bestScore' in data) || (data.bestScore is int && data.bestScore >= 0))
           && (!('attempts' in data) || (data.attempts is int && data.attempts >= 1))
-          && (!('detailedResults' in data) || (data.detailedResults is map && data.detailedResults.size() <= 200));
+          && (!('detailedResults' in data) || (data.detailedResults is map && data.detailedResults.size() <= 200))
+          && (!('attemptId' in data) || (data.attemptId is string && data.attemptId.size() <= 100))
+          && (!('submissionToken' in data) || (data.submissionToken is string && data.submissionToken.size() <= 128));
     }
 
     function isValidLessonProgress(docId, data) {
@@ -345,8 +347,7 @@ service cloud.firestore {
     /* -------------------------- 시험 응시 기록 ------------------------- */
     match /quizAttempts/{attemptId} {
       allow read: if isAdmin() || ownsStudent(resource.data.studentId);
-      allow create: if (isAdmin() || (ownsStudent(request.resource.data.studentId) && request.resource.data.attemptId == attemptId))
-                    && isValidQuizAttempt(attemptId, request.resource.data);
+      allow create: if isAdmin() && isValidQuizAttempt(attemptId, request.resource.data);
       allow update: if isAdmin() && isValidQuizAttempt(attemptId, request.resource.data);
       allow delete: if false; // 시험 응시 기록 삭제 절대 불가
     }

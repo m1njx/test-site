@@ -98,7 +98,21 @@ function decodeJwtPayload(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
-    const payload = Buffer.from(parts[1], 'base64').toString('utf8');
+    const payload = Buffer.from(parts[1], 'base64url').toString('utf8');
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+function verifyJwtSignature(token, secret) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [h, p, sig] = parts;
+    const expectedSig = crypto.createHmac('sha256', secret).update(`${h}.${p}`).digest('base64url');
+    if (!safeEqual(sig, expectedSig)) return null;
+    const payload = Buffer.from(p, 'base64url').toString('utf8');
     return JSON.parse(payload);
   } catch {
     return null;
@@ -130,20 +144,21 @@ async function requireAdminAuth(req, res, next) {
       return next();
     }
 
-    const jwt = decodeJwtPayload(token);
-    if (jwt) {
-      const isAdminRole = Boolean(jwt.admin || jwt.role === 'admin' || jwt.isAdmin);
-      const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.FIRESTORE_EMULATOR_HOST);
-
-      if (isAdminRole || (isTestEnv && jwt.uid && jwt.uid.startsWith('admin_'))) {
-        req.adminUid = jwt.uid || jwt.sub;
+    // 암호학적 서명 검증 (SERVER_SIGNING_SECRET 기반 서명 검증)
+    const verifiedJwt = verifyJwtSignature(token, SERVER_SIGNING_SECRET);
+    if (verifiedJwt) {
+      const isAdminRole = Boolean(verifiedJwt.admin || verifiedJwt.role === 'admin' || verifiedJwt.isAdmin);
+      if (isAdminRole) {
+        req.adminUid = verifiedJwt.uid || verifiedJwt.sub;
         return next();
       }
+      return res.status(403).json({ error: '관리자 권한이 없습니다.' });
+    }
 
-      // 학생 토큰이거나 관리자 권한이 없는 경우
-      if (jwt.role === 'student' || jwt.studentId || (jwt.uid && !isAdminRole)) {
-        return res.status(403).json({ error: '관리자 권한이 없습니다.' });
-      }
+    // 서명되지 않았거나 위조된 JWT는 관리자 인증으로 불인정 (P0 취약점 방어)
+    const unverifiedJwt = decodeJwtPayload(token);
+    if (unverifiedJwt) {
+      return res.status(403).json({ error: '위조되었거나 서명이 검증되지 않은 토큰입니다.' });
     }
   }
 
