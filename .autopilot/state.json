@@ -1,0 +1,19 @@
+{
+  "runId": "run-1792312477047",
+  "startedAt": "2026-10-18T08:34:37.047Z",
+  "projectRoot": "/Users/kangminje04/projects/test_site",
+  "branch": "autopilot/phase-improvements",
+  "phases": {},
+  "metrics": {
+    "userKeypressCount": 0,
+    "approvalCount": 0,
+    "interactivePromptCount": 0,
+    "blockedCount": 0
+  },
+  "status": "IN_PROGRESS",
+  "preflight": {
+    "status": "PASS",
+    "verifiedAt": "2026-10-18T08:34:42.688Z"
+  },
+  "updatedAt": "2026-10-18T08:34:42.688Z"
+}
