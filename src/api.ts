@@ -359,6 +359,11 @@ export async function saveQuiz(quiz: Quiz) {
           },
           body: JSON.stringify({
             quizId: quiz.id,
+            title: quiz.title,
+            description: quiz.description,
+            deadline: quiz.deadline,
+            maxAttempts: quiz.maxAttempts,
+            isPublished: quiz.isPublished !== false,
             questions: quiz.questions,
           }),
         });
@@ -373,29 +378,78 @@ export async function saveQuiz(quiz: Quiz) {
 }
 
 /**
- * 학생 답안을 서버에 전송하여 권위 있게 채점 (클라이언트 정답 노출 방지)
+ * 학생 답안을 서버에 전송하여 권위 있게 채점 (클라이언트 정답 노출 방지 및 멱등성 보장)
  */
-export async function submitForServerGrading(quizId: string, answers: Record<string, unknown>): Promise<{
+export async function submitForServerGrading(
+  quizId: string,
+  answers: Record<string, unknown>,
+  opts?: {
+    studentId?: string;
+    attemptId?: string;
+    currentAttempts?: number;
+  }
+): Promise<{
   ok: boolean;
   score: number;
   total: number;
+  percentage?: number;
   results: Record<string, boolean>;
   detailedResults?: Record<string, unknown>;
+  idempotent?: boolean;
 } | null> {
   if (!SERVER_URL) return null;
   try {
     const res = await fetch(`${SERVER_URL}/api/grade-submission`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quizId, answers }),
+      body: JSON.stringify({
+        quizId,
+        answers,
+        studentId: opts?.studentId,
+        attemptId: opts?.attemptId,
+        currentAttempts: opts?.currentAttempts,
+      }),
     });
     if (res.ok) {
       return await res.json();
     }
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `서버 채점 실패 (HTTP ${res.status})`);
   } catch (err) {
-    console.warn('Server grading request failed, falling back to client:', err);
+    console.warn('Server grading request error:', err);
+    throw err;
   }
-  return null;
+}
+
+/**
+ * 관리자 로그인/화면 진입 시 서버(Render Sleep/Wake 대비)에 퀴즈 정답 키 일괄 재동기화
+ */
+export async function syncAllQuizKeysToServer(quizzes: Quiz[]): Promise<boolean> {
+  if (!SERVER_URL || !UPLOAD_TOKEN || !Array.isArray(quizzes) || quizzes.length === 0) return false;
+  try {
+    const res = await fetch(`${SERVER_URL}/api/quiz-keys`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-upload-token': UPLOAD_TOKEN,
+      },
+      body: JSON.stringify({
+        quizzes: quizzes.map((q) => ({
+          id: q.id,
+          title: q.title,
+          description: q.description,
+          deadline: q.deadline,
+          maxAttempts: q.maxAttempts,
+          isPublished: q.isPublished !== false,
+          questions: q.questions,
+        })),
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('Bulk sync to video-server failed:', err);
+    return false;
+  }
 }
 
 export async function deleteQuiz(quizId: string) {

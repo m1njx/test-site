@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 .autopilot/logs
+video-server/data
+video-server/videos
+*.keys.json
 
 # Editor directories and files
 .vscode/*

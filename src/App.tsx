@@ -4,8 +4,8 @@ import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Ho
 import { quizzes, type Quiz, sanitizeQuizForStudent } from './data';
 import { type Student } from './team';
 import { observeSession, signOutUser, type SessionUser } from './session';
-import { hasAuth } from './firebase';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, submitForServerGrading, type Progress } from './api';
+import { hasAuth, isMock } from './firebase';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, submitForServerGrading, syncAllQuizKeysToServer, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import CourseHome from './lms/CourseHome';
@@ -189,6 +189,9 @@ export default function App() {
 
   const loadQuizzes = async () => {
     const qs = await getQuizzes();
+    if (isAdminUser && qs.length > 0) {
+      syncAllQuizKeysToServer(qs).catch(() => {});
+    }
     setDynamicQuizzes(() => {
       const merged = [...qs];
       quizzes.forEach(sq => {
@@ -558,10 +561,14 @@ export default function App() {
 
     let correctCount = 0;
     let serverGraded = false;
+    const attemptId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // 1. 서버 사이드 권위 있는 채점 시도 (클라이언트 정답 유출 방지)
+    // 1. 서버 사이드 권위 있는 채점 시도 (클라이언트 정답 유출 방지 및 멱등성 보장)
     try {
-      const serverResult = await submitForServerGrading(fullQuiz!.id, answers);
+      const serverResult = await submitForServerGrading(fullQuiz!.id, answers, {
+        studentId: loggedInUser || undefined,
+        attemptId,
+      });
       if (serverResult && serverResult.ok) {
         Object.assign(gradingResults, serverResult.results);
         if (serverResult.detailedResults) {
@@ -572,11 +579,20 @@ export default function App() {
         setGradingProgress({ done: questions.length, total: questions.length });
       }
     } catch (e) {
-      console.warn("Server grading failed, falling back to local grading:", e);
+      console.warn("Server grading failed:", e);
     }
 
     if (!serverGraded) {
-      // 2. 서버 미설정 또는 오프라인/Mock 모드 시 기존 채점 수행
+      // 운영 환경(PROD & !isMock)에서는 비인가 클라이언트 자체 채점 및 직접 성적 저장을 엄격히 차단
+      if (import.meta.env.PROD && !isMock) {
+        setIsGrading(false);
+        alert(
+          '공식 채점 서버와 통신할 수 없습니다.\n작성하신 답안은 안전하게 보존되었으니 네트워크 상태를 확인하시거나 관리자에게 문의 후 다시 시도해주세요.'
+        );
+        return;
+      }
+
+      // 2. 개발(DEV) 또는 Mock 모드 시 로컬 채점 폴백 허용 (개발 편의 및 로컬 테스트 지원)
       let done = 0;
       const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
 

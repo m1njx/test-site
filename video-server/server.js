@@ -347,41 +347,115 @@ app.post('/api/ai-explain', requireToken, aiRateLimit, async (req, res) => {
   }
 });
 
-// 정답 키 저장소 경로
+// 정답 키 저장소 경로 및 원자적 영구 저장소
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const QUIZ_KEYS_FILE = path.join(DATA_DIR, 'quiz-keys.json');
 
+let inMemoryKeys = null;
+
 function loadQuizKeys() {
+  if (inMemoryKeys !== null) return inMemoryKeys;
   try {
     if (fs.existsSync(QUIZ_KEYS_FILE)) {
-      return JSON.parse(fs.readFileSync(QUIZ_KEYS_FILE, 'utf8'));
+      inMemoryKeys = JSON.parse(fs.readFileSync(QUIZ_KEYS_FILE, 'utf8'));
+      return inMemoryKeys;
     }
   } catch (err) {
     console.warn('Failed to load quiz-keys.json:', err.message);
   }
-  return {};
+  inMemoryKeys = {};
+  return inMemoryKeys;
 }
 
 function saveQuizKeys(data) {
+  inMemoryKeys = data;
+  const tmpFile = path.join(DATA_DIR, `.quiz-keys.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`);
   try {
-    fs.writeFileSync(QUIZ_KEYS_FILE, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
+    fs.renameSync(tmpFile, QUIZ_KEYS_FILE);
   } catch (err) {
-    console.error('Failed to save quiz-keys.json:', err.message);
+    console.error('Failed to save quiz-keys.json atomically:', err.message);
+    try {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    } catch {
+      // ignore cleanup error
+    }
   }
 }
 
-// 관리자 전용: 퀴즈 정답 키 서버 등록
+// 시험 제출 전용 레이트 리밋 (IP당 5분에 20회)
+const SUBMIT_WINDOW_MS = 5 * 60 * 1000;
+const SUBMIT_MAX = 20;
+const submitHits = new Map();
+
+function submissionRateLimit(req, res, next) {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const list = (submitHits.get(ip) || []).filter((t) => now - t < SUBMIT_WINDOW_MS);
+  if (list.length >= SUBMIT_MAX) {
+    return res.status(429).json({ error: '시험 제출 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' });
+  }
+  list.push(now);
+  submitHits.set(ip, list);
+  if (submitHits.size > 2000) {
+    for (const [k, v] of submitHits) {
+      if (v.every((t) => now - t >= SUBMIT_WINDOW_MS)) submitHits.delete(k);
+    }
+  }
+  next();
+}
+
+// 제출 멱등성 및 중복 방지 캐시 (TTL: 10분)
+const submissionCache = new Map();
+const SUBMISSION_CACHE_TTL_MS = 10 * 60 * 1000;
+
+// 관리자 전용: 퀴즈 정답 키 서버 등록 및 대량 동기화
 app.post('/api/quiz-keys', requireToken, (req, res) => {
   try {
-    const { quizId, questions } = req.body || {};
+    const { quizId, questions, title, description, deadline, maxAttempts, isPublished, quizzes: bulkQuizzes } = req.body || {};
+    const allKeys = loadQuizKeys();
+
+    if (Array.isArray(bulkQuizzes)) {
+      for (const bq of bulkQuizzes) {
+        if (bq && bq.id && Array.isArray(bq.questions)) {
+          allKeys[bq.id] = {
+            quizId: bq.id,
+            updatedAt: Date.now(),
+            title: String(bq.title || ''),
+            description: String(bq.description || ''),
+            deadline: bq.deadline || undefined,
+            maxAttempts: typeof bq.maxAttempts === 'number' ? bq.maxAttempts : undefined,
+            isPublished: bq.isPublished !== false,
+            questions: bq.questions.map((q) => ({
+              id: String(q.id),
+              type: q.type || 'multiple',
+              title: String(q.title || ''),
+              description: String(q.description || ''),
+              options: Array.isArray(q.options) ? q.options : [],
+              correctAnswers: Array.isArray(q.correctAnswers) ? q.correctAnswers : [],
+              explanation: String(q.explanation || ''),
+              setupCode: String(q.setupCode || ''),
+              validationCode: String(q.validationCode || ''),
+            })),
+          };
+        }
+      }
+      saveQuizKeys(allKeys);
+      return res.json({ ok: true, syncedCount: bulkQuizzes.length, total: Object.keys(allKeys).length });
+    }
+
     if (!quizId || !Array.isArray(questions)) {
       return res.status(400).json({ error: 'quizId 및 questions 배열이 필요합니다.' });
     }
-    const allKeys = loadQuizKeys();
     allKeys[quizId] = {
       quizId,
       updatedAt: Date.now(),
+      title: String(title || ''),
+      description: String(description || ''),
+      deadline: deadline || undefined,
+      maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : undefined,
+      isPublished: isPublished !== false,
       questions: questions.map((q) => ({
         id: String(q.id),
         type: q.type || 'multiple',
@@ -395,25 +469,70 @@ app.post('/api/quiz-keys', requireToken, (req, res) => {
       })),
     };
     saveQuizKeys(allKeys);
-    res.json({ ok: true, quizId, count: questions.length });
+    res.json({ ok: true, quizId, count: questions.length, total: Object.keys(allKeys).length });
   } catch (err) {
     console.error('Error saving quiz keys:', err.message);
     res.status(500).json({ error: '정답 키 저장 중 오류가 발생했습니다.' });
   }
 });
 
+// 관리자 전용: 서버에 캐시된 퀴즈 정답 키 상태 확인 (Render 재시작 후 복구 점검용)
+app.get('/api/quiz-keys/status', requireToken, (_req, res) => {
+  const keys = loadQuizKeys();
+  const summary = Object.keys(keys).map((id) => ({
+    quizId: id,
+    title: keys[id].title || '',
+    questionCount: (keys[id].questions || []).length,
+    updatedAt: keys[id].updatedAt,
+    deadline: keys[id].deadline,
+    isPublished: keys[id].isPublished,
+  }));
+  res.json({ ok: true, count: summary.length, quizzes: summary });
+});
+
 // 권위 있는 서버 사이드 제출 채점 엔드포인트
-app.post('/api/grade-submission', async (req, res) => {
+app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
   try {
-    const { quizId, answers } = req.body || {};
-    if (!quizId || !answers || typeof answers !== 'object') {
-      return res.status(400).json({ error: 'quizId와 answers 객체가 필요합니다.' });
+    const { quizId, answers, studentId, attemptId, currentAttempts } = req.body || {};
+    if (!quizId || typeof quizId !== 'string') {
+      return res.status(400).json({ error: '유효한 quizId가 필요합니다.' });
+    }
+    if (!answers || typeof answers !== 'object') {
+      return res.status(400).json({ error: 'answers 객체가 필요합니다.' });
+    }
+
+    // 1. 멱등성 검사 (동일 학생, 퀴즈, 시도 ID의 재요청 처리)
+    const idempotencyKey = attemptId ? `${quizId}:${studentId || 'anon'}:${attemptId}` : null;
+    if (idempotencyKey && submissionCache.has(idempotencyKey)) {
+      const cached = submissionCache.get(idempotencyKey);
+      if (Date.now() - cached.ts < SUBMISSION_CACHE_TTL_MS) {
+        return res.json({ ...cached.result, idempotent: true });
+      }
     }
 
     const allKeys = loadQuizKeys();
     const quizKey = allKeys[quizId];
     if (!quizKey || !Array.isArray(quizKey.questions)) {
-      return res.status(404).json({ error: '서버에 해당 퀴즈의 정답 키가 없습니다.' });
+      return res.status(404).json({ error: '서버에 해당 퀴즈의 정답 키가 없습니다. 관리자에게 문의하세요.' });
+    }
+
+    // 2. 시험 공개 여부 검증
+    if (quizKey.isPublished === false) {
+      return res.status(403).json({ error: '아직 공개되지 않은 시험입니다.' });
+    }
+
+    // 3. 마감 기한 검증 (네트워크 지연 감안 1분 유예)
+    if (quizKey.deadline) {
+      const rawDeadline = quizKey.deadline.includes('T') ? quizKey.deadline : `${quizKey.deadline}T23:59:59`;
+      const deadlineMs = new Date(rawDeadline).getTime();
+      if (!isNaN(deadlineMs) && Date.now() > deadlineMs + 60 * 1000) {
+        return res.status(403).json({ error: '시험 마감 시간이 지나 채점할 수 없습니다.' });
+      }
+    }
+
+    // 4. 최대 응시 횟수 검증
+    if (quizKey.maxAttempts && typeof currentAttempts === 'number' && currentAttempts >= quizKey.maxAttempts) {
+      return res.status(403).json({ error: `최대 응시 가능 횟수(${quizKey.maxAttempts}회)를 초과했습니다.` });
     }
 
     const questions = quizKey.questions;
@@ -479,17 +598,33 @@ app.post('/api/grade-submission', async (req, res) => {
       }
     }
 
-    res.json({
+    const payload = {
       ok: true,
       quizId,
+      studentId: studentId || null,
+      attemptId: attemptId || null,
       score,
       total: questions.length,
+      percentage: questions.length > 0 ? Math.round((score / questions.length) * 100) : 0,
       results,
       detailedResults,
-    });
+      gradedAt: Date.now(),
+    };
+
+    if (idempotencyKey) {
+      submissionCache.set(idempotencyKey, { result: payload, ts: Date.now() });
+      if (submissionCache.size > 2000) {
+        const cutoff = Date.now() - SUBMISSION_CACHE_TTL_MS;
+        for (const [k, v] of submissionCache) {
+          if (v.ts < cutoff) submissionCache.delete(k);
+        }
+      }
+    }
+
+    res.json(payload);
   } catch (err) {
     console.error('Grade submission error:', err.message);
-    res.status(500).json({ error: '제출 채점 중 오류가 발생했습니다.' });
+    res.status(500).json({ error: '제출 채점 중 서버 오류가 발생했습니다.' });
   }
 });
 
