@@ -1,0 +1,16 @@
+services:
+  video-server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      UPLOAD_TOKEN: "change-me-and-match-VITE_VIDEO_UPLOAD_TOKEN"
+      ALLOW_ORIGIN: "*"        # 운영 시 프론트 도메인으로 제한 권장
+      MAX_MB: "2048"
+      VIDEO_DIR: "/data/videos"
+    volumes:
+      - video-data:/data/videos   # 영구 저장 (컨테이너 재생성돼도 유지)
+    restart: unless-stopped
+
+volumes:
+  video-data:
