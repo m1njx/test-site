@@ -113,8 +113,8 @@ export async function gradeWithGemini(q: Question, userAns: string): Promise<{ i
     }
   }
 
-  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드)
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드 전용)
+  const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
   if (!apiKey) {
     throw new Error('Gemini API key is not configured and server proxy is unavailable');
   }
@@ -197,8 +197,8 @@ export async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ c
     }
   }
 
-  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드)
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드 전용)
+  const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
   if (!apiKey) {
     throw new Error('Gemini API key is not configured and server proxy is unavailable');
   }

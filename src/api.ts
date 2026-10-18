@@ -3,6 +3,9 @@ import { collection, setDoc, getDocs, doc, query, where, deleteDoc, orderBy, get
 import type { Quiz, QuizAnswerDocument } from './data';
 import type { Student } from './team';
 
+const SERVER_URL = (import.meta.env.VITE_VIDEO_SERVER_URL || '').replace(/\/$/, '');
+const UPLOAD_TOKEN = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
+
 
 /**
  * Firebase 미설정(=isMock) 시 사용하는 로컬 저장소.
@@ -344,10 +347,55 @@ export async function saveQuiz(quiz: Quiz) {
       })),
     };
     await setDoc(doc(db, 'quizAnswers', quiz.id), answersData);
+
+    // video-server 정답 키 저장소 동기화 (설정 시)
+    if (SERVER_URL && UPLOAD_TOKEN) {
+      try {
+        await fetch(`${SERVER_URL}/api/quiz-keys`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-upload-token': UPLOAD_TOKEN,
+          },
+          body: JSON.stringify({
+            quizId: quiz.id,
+            questions: quiz.questions,
+          }),
+        });
+      } catch (err) {
+        console.warn('Syncing quiz keys to video-server failed:', err);
+      }
+    }
   } catch (error) {
     console.error("Error saving quiz:", error);
     throw error;
   }
+}
+
+/**
+ * 학생 답안을 서버에 전송하여 권위 있게 채점 (클라이언트 정답 노출 방지)
+ */
+export async function submitForServerGrading(quizId: string, answers: Record<string, unknown>): Promise<{
+  ok: boolean;
+  score: number;
+  total: number;
+  results: Record<string, boolean>;
+  detailedResults?: Record<string, unknown>;
+} | null> {
+  if (!SERVER_URL) return null;
+  try {
+    const res = await fetch(`${SERVER_URL}/api/grade-submission`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quizId, answers }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn('Server grading request failed, falling back to client:', err);
+  }
+  return null;
 }
 
 export async function deleteQuiz(quizId: string) {

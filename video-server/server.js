@@ -347,6 +347,152 @@ app.post('/api/ai-explain', requireToken, aiRateLimit, async (req, res) => {
   }
 });
 
+// 정답 키 저장소 경로
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const QUIZ_KEYS_FILE = path.join(DATA_DIR, 'quiz-keys.json');
+
+function loadQuizKeys() {
+  try {
+    if (fs.existsSync(QUIZ_KEYS_FILE)) {
+      return JSON.parse(fs.readFileSync(QUIZ_KEYS_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.warn('Failed to load quiz-keys.json:', err.message);
+  }
+  return {};
+}
+
+function saveQuizKeys(data) {
+  try {
+    fs.writeFileSync(QUIZ_KEYS_FILE, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save quiz-keys.json:', err.message);
+  }
+}
+
+// 관리자 전용: 퀴즈 정답 키 서버 등록
+app.post('/api/quiz-keys', requireToken, (req, res) => {
+  try {
+    const { quizId, questions } = req.body || {};
+    if (!quizId || !Array.isArray(questions)) {
+      return res.status(400).json({ error: 'quizId 및 questions 배열이 필요합니다.' });
+    }
+    const allKeys = loadQuizKeys();
+    allKeys[quizId] = {
+      quizId,
+      updatedAt: Date.now(),
+      questions: questions.map((q) => ({
+        id: String(q.id),
+        type: q.type || 'multiple',
+        title: String(q.title || ''),
+        description: String(q.description || ''),
+        options: Array.isArray(q.options) ? q.options : [],
+        correctAnswers: Array.isArray(q.correctAnswers) ? q.correctAnswers : [],
+        explanation: String(q.explanation || ''),
+        setupCode: String(q.setupCode || ''),
+        validationCode: String(q.validationCode || ''),
+      })),
+    };
+    saveQuizKeys(allKeys);
+    res.json({ ok: true, quizId, count: questions.length });
+  } catch (err) {
+    console.error('Error saving quiz keys:', err.message);
+    res.status(500).json({ error: '정답 키 저장 중 오류가 발생했습니다.' });
+  }
+});
+
+// 권위 있는 서버 사이드 제출 채점 엔드포인트
+app.post('/api/grade-submission', async (req, res) => {
+  try {
+    const { quizId, answers } = req.body || {};
+    if (!quizId || !answers || typeof answers !== 'object') {
+      return res.status(400).json({ error: 'quizId와 answers 객체가 필요합니다.' });
+    }
+
+    const allKeys = loadQuizKeys();
+    const quizKey = allKeys[quizId];
+    if (!quizKey || !Array.isArray(quizKey.questions)) {
+      return res.status(404).json({ error: '서버에 해당 퀴즈의 정답 키가 없습니다.' });
+    }
+
+    const questions = quizKey.questions;
+    const results = {};
+    const detailedResults = {};
+    let score = 0;
+
+    for (const q of questions) {
+      const userAns = answers[q.id];
+      const isBlank =
+        q.type === 'short'
+          ? !(typeof userAns === 'string' && userAns.trim())
+          : !(Array.isArray(userAns) && userAns.length > 0);
+
+      if (isBlank) {
+        results[q.id] = false;
+        continue;
+      }
+
+      if (q.type === 'multiple' || q.type === 'multiple-multi') {
+        const u = Array.isArray(userAns) ? userAns : [userAns];
+        const correct = q.correctAnswers || [];
+        const isCorrect =
+          u.length === correct.length &&
+          [...u].sort().join(',') === [...correct].sort().join(',');
+
+        results[q.id] = isCorrect;
+        if (isCorrect) score += 1;
+        if (q.explanation) {
+          detailedResults[`ai_exp_${q.id}`] = q.explanation;
+        }
+      } else if (q.type === 'short') {
+        const u = typeof userAns === 'string' ? userAns.trim() : '';
+        const exactMatches = (q.correctAnswers || []).map((a) => a.trim().toLowerCase());
+        const isExact = exactMatches.includes(u.toLowerCase());
+
+        if (isExact) {
+          results[q.id] = true;
+          score += 1;
+          detailedResults[`reason_${q.id}`] = '정답입니다.';
+        } else if (GEMINI_API_KEY) {
+          try {
+            const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 학생의 답변을 너그럽게 채점해줘.
+질문: ${q.title}
+설명: ${q.description || ''}
+학생 답안: ${u}
+응답은 반드시 마크다운 없이 JSON 객체 하나로만 출력:
+{"isCorrect": true/false, "reason": "이유", "explanation": "해설"}`;
+            const text = await callGemini(prompt);
+            const parsed = parseGeminiJson(text);
+            const correct = Boolean(parsed.isCorrect);
+            results[q.id] = correct;
+            if (correct) score += 1;
+            if (parsed.reason) detailedResults[`reason_${q.id}`] = parsed.reason;
+            if (parsed.explanation) detailedResults[`ai_exp_${q.id}`] = parsed.explanation;
+          } catch {
+            results[q.id] = false;
+            detailedResults[`reason_${q.id}`] = 'AI 채점 연결 실패로 오답 처리되었습니다.';
+          }
+        } else {
+          results[q.id] = false;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      quizId,
+      score,
+      total: questions.length,
+      results,
+      detailedResults,
+    });
+  } catch (err) {
+    console.error('Grade submission error:', err.message);
+    res.status(500).json({ error: '제출 채점 중 오류가 발생했습니다.' });
+  }
+});
+
 app.get('/health', (_req, res) => res.json({ ok: true, aiConfigured: Boolean(GEMINI_API_KEY) }));
 
 app.listen(PORT, () => console.log(`video-server on :${PORT}  dir=${VIDEO_DIR}`));

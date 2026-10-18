@@ -5,7 +5,7 @@ import { quizzes, type Quiz, sanitizeQuizForStudent } from './data';
 import { type Student } from './team';
 import { observeSession, signOutUser, type SessionUser } from './session';
 import { hasAuth } from './firebase';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress } from './api';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, submitForServerGrading, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import CourseHome from './lms/CourseHome';
@@ -556,76 +556,96 @@ export default function App() {
     const questions = fullQuiz!.questions;
     setGradingProgress({ done: 0, total: questions.length });
 
-    // 객관식은 즉시 로컬 채점하고, AI 호출이 필요한 부분만 병렬로 처리한다.
-    // (직렬 호출 시 문항 수 × 최대 15초까지 걸려 제출이 사실상 멈춘 것처럼 보였다)
-    let done = 0;
-    const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
+    let correctCount = 0;
+    let serverGraded = false;
 
-    const gradeOne = async (q: typeof questions[number]) => {
-      const userAns = answers[q.id];
-      const isBlank = q.type === 'short'
-        ? !(typeof userAns === 'string' && userAns.trim())
-        : !(Array.isArray(userAns) && userAns.length > 0);
-      if (isBlank) { gradingResults[q.id] = false; bump(); return; }
-
-      if (q.type === 'short') {
-        const u = typeof userAns === 'string' ? userAns : '';
-        let graded = false;
-        try {
-          const geminiResult = await gradeWithGemini(q, u);
-          gradingResults[q.id] = geminiResult.isCorrect;
-          fullResults[`reason_${q.id}`] = geminiResult.reason;
-          if (geminiResult.correctAnswer) fullResults[`ai_ans_${q.id}`] = geminiResult.correctAnswer;
-          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
-          graded = true;
-        } catch (e) {
-          console.warn("Gemini grading failed, falling back to Pyodide:", e);
+    // 1. 서버 사이드 권위 있는 채점 시도 (클라이언트 정답 유출 방지)
+    try {
+      const serverResult = await submitForServerGrading(fullQuiz!.id, answers);
+      if (serverResult && serverResult.ok) {
+        Object.assign(gradingResults, serverResult.results);
+        if (serverResult.detailedResults) {
+          Object.assign(fullResults, serverResult.detailedResults);
         }
-
-        if (!graded) {
-          const py = pyodide || (await ensurePyodide());
-          if (py) {
-            try {
-              py.runPython(`locals().clear()`);
-              if (q.setupCode) py.runPython(q.setupCode);
-              let userRes = null;
-              try { userRes = py.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
-              py.globals.set('_user_result', userRes);
-              const isCorrect = py.runPython(q.validationCode || 'False');
-              gradingResults[q.id] = isCorrect === true;
-            } catch {
-              gradingResults[q.id] = false;
-            }
-          } else {
-            // 채점 수단이 모두 실패 — 오답 처리 대신 사유를 남긴다
-            gradingResults[q.id] = false;
-            fullResults[`reason_${q.id}`] = '자동 채점에 실패했습니다. 관리자에게 문의해주세요.';
-          }
-        }
-      } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
-        const u = Array.isArray(userAns) ? userAns : [userAns as string];
-        const correct = q.correctAnswers || [];
-        gradingResults[q.id] =
-          u.length === correct.length &&
-          [...u].sort().join(',') === [...correct].sort().join(',');
-
-        try {
-          const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-          const correctTexts = correct.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-          const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
-          fullResults[`reason_${q.id}`] = geminiResult.reason;
-          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
-        } catch (e) {
-          console.warn("Gemini explanation failed for multiple-choice:", e);
-        }
-      } else {
-        gradingResults[q.id] = false;
+        correctCount = serverResult.score;
+        serverGraded = true;
+        setGradingProgress({ done: questions.length, total: questions.length });
       }
-      bump();
-    };
+    } catch (e) {
+      console.warn("Server grading failed, falling back to local grading:", e);
+    }
 
-    await Promise.all(questions.map(gradeOne));
-    const correctCount = questions.reduce((n, q) => (gradingResults[q.id] ? n + 1 : n), 0);
+    if (!serverGraded) {
+      // 2. 서버 미설정 또는 오프라인/Mock 모드 시 기존 채점 수행
+      let done = 0;
+      const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
+
+      const gradeOne = async (q: typeof questions[number]) => {
+        const userAns = answers[q.id];
+        const isBlank = q.type === 'short'
+          ? !(typeof userAns === 'string' && userAns.trim())
+          : !(Array.isArray(userAns) && userAns.length > 0);
+        if (isBlank) { gradingResults[q.id] = false; bump(); return; }
+
+        if (q.type === 'short') {
+          const u = typeof userAns === 'string' ? userAns : '';
+          let graded = false;
+          try {
+            const geminiResult = await gradeWithGemini(q, u);
+            gradingResults[q.id] = geminiResult.isCorrect;
+            fullResults[`reason_${q.id}`] = geminiResult.reason;
+            if (geminiResult.correctAnswer) fullResults[`ai_ans_${q.id}`] = geminiResult.correctAnswer;
+            if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
+            graded = true;
+          } catch (e) {
+            console.warn("Gemini grading failed, falling back to Pyodide:", e);
+          }
+
+          if (!graded) {
+            const py = pyodide || (await ensurePyodide());
+            if (py) {
+              try {
+                py.runPython(`locals().clear()`);
+                if (q.setupCode) py.runPython(q.setupCode);
+                let userRes = null;
+                try { userRes = py.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
+                py.globals.set('_user_result', userRes);
+                const isCorrect = py.runPython(q.validationCode || 'False');
+                gradingResults[q.id] = isCorrect === true;
+              } catch {
+                gradingResults[q.id] = false;
+              }
+            } else {
+              // 채점 수단이 모두 실패 — 오답 처리 대신 사유를 남긴다
+              gradingResults[q.id] = false;
+              fullResults[`reason_${q.id}`] = '자동 채점에 실패했습니다. 관리자에게 문의해주세요.';
+            }
+          }
+        } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
+          const u = Array.isArray(userAns) ? userAns : [userAns as string];
+          const correct = q.correctAnswers || [];
+          gradingResults[q.id] =
+            u.length === correct.length &&
+            [...u].sort().join(',') === [...correct].sort().join(',');
+
+          try {
+            const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+            const correctTexts = correct.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+            const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
+            fullResults[`reason_${q.id}`] = geminiResult.reason;
+            if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
+          } catch (e) {
+            console.warn("Gemini explanation failed for multiple-choice:", e);
+          }
+        } else {
+          gradingResults[q.id] = false;
+        }
+        bump();
+      };
+
+      await Promise.all(questions.map(gradeOne));
+      correctCount = questions.reduce((n, q) => (gradingResults[q.id] ? n + 1 : n), 0);
+    }
 
     Object.assign(fullResults, gradingResults);
     questions.forEach(q => {

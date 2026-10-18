@@ -546,7 +546,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 질문: ${q.title}
 선택지: ${q.options?.join(', ')}
 정답: ${correctTexts}`;
-                                    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+                                    const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
                                     if (!apiKey) throw new Error('API key not configured');
                                     
                                     const text = await callGeminiWithFallback(apiKey, prompt);

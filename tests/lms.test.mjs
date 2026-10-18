@@ -46,26 +46,27 @@ test('LMS: rangesTotal accurately calculates unique watched duration', () => {
   assert.equal(total, 15 + 20); // 35 seconds
 });
 
-test('LMS: 80% anti-skip watch threshold validation', () => {
+test('LMS: 95% anti-skip watch threshold validation (production default)', () => {
   const duration = 100;
+  const completionRatio = 0.95;
   const watchedRanges = [
-    [0, 40],
-    [30, 80], // overlaps -> [0, 80] = 80s
+    [0, 50],
+    [40, 95], // overlaps -> [0, 95] = 95s
   ];
   const merged = mergeRanges(watchedRanges);
   const watchedSec = rangesTotal(merged);
-  const isCompleted = duration > 0 && watchedSec / duration >= 0.8;
+  const isCompleted = duration > 0 && watchedSec >= duration * completionRatio;
 
   assert.equal(isCompleted, true);
 
-  // If only watched 79s
+  // If only watched 94s
   const partial = [
     [0, 50],
-    [60, 89], // total 50 + 29 = 79s
+    [55, 99], // total 50 + 44 = 94s
   ];
   const partialMerged = mergeRanges(partial);
   const partialSec = rangesTotal(partialMerged);
-  assert.equal(partialSec / duration >= 0.8, false);
+  assert.equal(partialSec >= duration * completionRatio, false);
 });
 
 test('LMS: formatAnswer formats single, multiple, and empty answers', () => {
