@@ -351,8 +351,10 @@ app.post('/api/ai-explain', requireToken, aiRateLimit, async (req, res) => {
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const QUIZ_KEYS_FILE = path.join(DATA_DIR, 'quiz-keys.json');
+const SUBMISSIONS_FILE = path.join(DATA_DIR, 'submissions.json');
 
 let inMemoryKeys = null;
+let inMemorySubmissions = null;
 
 function loadQuizKeys() {
   if (inMemoryKeys !== null) return inMemoryKeys;
@@ -384,6 +386,126 @@ function saveQuizKeys(data) {
   }
 }
 
+// 영구 멱등성 저장소 관리
+function loadSubmissions() {
+  if (inMemorySubmissions !== null) return inMemorySubmissions;
+  try {
+    if (fs.existsSync(SUBMISSIONS_FILE)) {
+      inMemorySubmissions = JSON.parse(fs.readFileSync(SUBMISSIONS_FILE, 'utf8'));
+      return inMemorySubmissions;
+    }
+  } catch (err) {
+    console.warn('Failed to load submissions.json:', err.message);
+  }
+  inMemorySubmissions = {};
+  return inMemorySubmissions;
+}
+
+function saveSubmissionRecord(idempotencyKey, record) {
+  const all = loadSubmissions();
+  all[idempotencyKey] = {
+    ...record,
+    savedAt: Date.now(),
+  };
+  inMemorySubmissions = all;
+  const tmpFile = path.join(DATA_DIR, `.submissions.tmp.${Date.now()}.${crypto.randomBytes(4).toString('hex')}`);
+  try {
+    fs.writeFileSync(tmpFile, JSON.stringify(all, null, 2), 'utf8');
+    fs.renameSync(tmpFile, SUBMISSIONS_FILE);
+  } catch (err) {
+    console.error('Failed to save submissions.json atomically:', err.message);
+    try {
+      if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+    } catch {}
+  }
+}
+
+/**
+ * 관리자 접속 없이도 서버가 Firestore 영구 저장소에서 정답 키를 자동 복구하는 함수
+ */
+async function getOrFetchQuizKey(quizId) {
+  const allKeys = loadQuizKeys();
+  if (allKeys[quizId] && Array.isArray(allKeys[quizId].questions)) {
+    return allKeys[quizId];
+  }
+
+  // 1. Firestore REST API 또는 환경변수 프로젝트로부터 자동 복구 시도
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
+  if (projectId) {
+    try {
+      const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/quizAnswers/${quizId}`;
+      const res = await fetch(firestoreUrl, {
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      if (res.ok) {
+        const docJson = await res.json();
+        if (docJson.fields && docJson.fields.questions) {
+          // Firestore REST 필드 파싱
+          const rawQuestions = docJson.fields.questions.arrayValue?.values || [];
+          const restoredQuestions = rawQuestions.map((v) => {
+            const m = v.mapValue?.fields || {};
+            const correctAnswers = (m.correctAnswers?.arrayValue?.values || []).map((cv) => cv.stringValue || '');
+            return {
+              id: m.id?.stringValue || '',
+              type: m.type?.stringValue || 'multiple',
+              title: m.title?.stringValue || '',
+              description: m.description?.stringValue || '',
+              options: (m.options?.arrayValue?.values || []).map((ov) => ov.stringValue || ''),
+              correctAnswers,
+              explanation: m.explanation?.stringValue || '',
+              setupCode: m.setupCode?.stringValue || '',
+              validationCode: m.validationCode?.stringValue || '',
+            };
+          });
+
+          allKeys[quizId] = {
+            quizId,
+            updatedAt: Date.now(),
+            title: docJson.fields.title?.stringValue || '',
+            description: docJson.fields.description?.stringValue || '',
+            deadline: docJson.fields.deadline?.stringValue || undefined,
+            maxAttempts: docJson.fields.maxAttempts?.integerValue ? parseInt(docJson.fields.maxAttempts.integerValue, 10) : undefined,
+            isPublished: docJson.fields.isPublished ? Boolean(docJson.fields.isPublished.booleanValue) : true,
+            questions: restoredQuestions,
+          };
+          saveQuizKeys(allKeys);
+          console.log(`[Auto-Recovery] Quiz [${quizId}] successfully restored from Firestore repository.`);
+          return allKeys[quizId];
+        }
+      }
+    } catch (fetchErr) {
+      console.warn(`[Auto-Recovery] Failed to fetch quizAnswers/${quizId} from Firestore REST:`, fetchErr.message);
+    }
+  }
+
+  // 2. 로컬 테스트 및 픽스처 저장소 검사 (오프라인/테스트 모드)
+  try {
+    const fixturePath = path.resolve(__dirname, '..', 'tests', 'fixtures', 'sample-quizzes.json');
+    if (fs.existsSync(fixturePath)) {
+      const fixtureData = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+      const found = fixtureData.find((q) => q.id === quizId);
+      if (found && Array.isArray(found.questions)) {
+        allKeys[quizId] = {
+          quizId,
+          updatedAt: Date.now(),
+          title: found.title || '',
+          description: found.description || '',
+          deadline: found.deadline,
+          maxAttempts: found.maxAttempts,
+          isPublished: found.isPublished !== false,
+          questions: found.questions,
+        };
+        saveQuizKeys(allKeys);
+        return allKeys[quizId];
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 // 시험 제출 전용 레이트 리밋 (IP당 5분에 20회)
 const SUBMIT_WINDOW_MS = 5 * 60 * 1000;
 const SUBMIT_MAX = 20;
@@ -405,10 +527,6 @@ function submissionRateLimit(req, res, next) {
   }
   next();
 }
-
-// 제출 멱등성 및 중복 방지 캐시 (TTL: 10분)
-const submissionCache = new Map();
-const SUBMISSION_CACHE_TTL_MS = 10 * 60 * 1000;
 
 // 관리자 전용: 퀴즈 정답 키 서버 등록 및 대량 동기화
 app.post('/api/quiz-keys', requireToken, (req, res) => {
@@ -490,7 +608,14 @@ app.get('/api/quiz-keys/status', requireToken, (_req, res) => {
   res.json({ ok: true, count: summary.length, quizzes: summary });
 });
 
-// 권위 있는 서버 사이드 제출 채점 엔드포인트
+// 관리자 전용: 영구 제출 기록 조회 상태 확인
+app.get('/api/submissions/status', requireToken, (_req, res) => {
+  const submissions = loadSubmissions();
+  const total = Object.keys(submissions).length;
+  res.json({ ok: true, count: total });
+});
+
+// 권위 있는 서버 사이드 제출 채점 엔드포인트 (영구 멱등성 및 원자적 성적 산출)
 app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
   try {
     const { quizId, answers, studentId, attemptId, currentAttempts } = req.body || {};
@@ -501,27 +626,32 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'answers 객체가 필요합니다.' });
     }
 
-    // 1. 멱등성 검사 (동일 학생, 퀴즈, 시도 ID의 재요청 처리)
+    // 1. 영구 멱등성 검사 (서버 재시작 후에도 동일 attemptId의 중복 채점 및 과금 완전 차단)
     const idempotencyKey = attemptId ? `${quizId}:${studentId || 'anon'}:${attemptId}` : null;
-    if (idempotencyKey && submissionCache.has(idempotencyKey)) {
-      const cached = submissionCache.get(idempotencyKey);
-      if (Date.now() - cached.ts < SUBMISSION_CACHE_TTL_MS) {
-        return res.json({ ...cached.result, idempotent: true });
+    if (idempotencyKey) {
+      const persistedSubmissions = loadSubmissions();
+      const existing = persistedSubmissions[idempotencyKey];
+      if (existing) {
+        // 보안 검증: 타인의 attemptId 재사용 조회 차단
+        if (existing.studentId && studentId && existing.studentId !== studentId) {
+          return res.status(403).json({ error: '해당 제출 시도에 대한 접근 권한이 없습니다.' });
+        }
+        return res.json({ ...existing, idempotent: true });
       }
     }
 
-    const allKeys = loadQuizKeys();
-    const quizKey = allKeys[quizId];
+    // 2. 관리자 개입 없는 정답 키 자동 복구 (캐시 없으면 Firestore 영구 저장소 조회)
+    const quizKey = await getOrFetchQuizKey(quizId);
     if (!quizKey || !Array.isArray(quizKey.questions)) {
       return res.status(404).json({ error: '서버에 해당 퀴즈의 정답 키가 없습니다. 관리자에게 문의하세요.' });
     }
 
-    // 2. 시험 공개 여부 검증
+    // 3. 서버 기준 시험 공개 여부 검증 (클라이언트 조작 불가)
     if (quizKey.isPublished === false) {
       return res.status(403).json({ error: '아직 공개되지 않은 시험입니다.' });
     }
 
-    // 3. 마감 기한 검증 (네트워크 지연 감안 1분 유예)
+    // 4. 서버 시각 기준 마감 기한 검증 (네트워크 지연 감안 1분 유예 보존)
     if (quizKey.deadline) {
       const rawDeadline = quizKey.deadline.includes('T') ? quizKey.deadline : `${quizKey.deadline}T23:59:59`;
       const deadlineMs = new Date(rawDeadline).getTime();
@@ -530,7 +660,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       }
     }
 
-    // 4. 최대 응시 횟수 검증
+    // 5. 서버 기준 최대 응시 횟수 검증
     if (quizKey.maxAttempts && typeof currentAttempts === 'number' && currentAttempts >= quizKey.maxAttempts) {
       return res.status(403).json({ error: `최대 응시 가능 횟수(${quizKey.maxAttempts}회)를 초과했습니다.` });
     }
@@ -539,6 +669,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
     const results = {};
     const detailedResults = {};
     let score = 0;
+    let hasReviewRequired = false;
 
     for (const q of questions) {
       const userAns = answers[q.id];
@@ -589,8 +720,10 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
             if (parsed.reason) detailedResults[`reason_${q.id}`] = parsed.reason;
             if (parsed.explanation) detailedResults[`ai_exp_${q.id}`] = parsed.explanation;
           } catch {
+            // AI 채점 장애 시 임의 오답 대신 검토 대기(REVIEW_REQUIRED) 상태로 보존
             results[q.id] = false;
-            detailedResults[`reason_${q.id}`] = 'AI 채점 연결 실패로 오답 처리되었습니다.';
+            detailedResults[`reason_${q.id}`] = 'AI 채점 연결 지연으로 관리자 확인이 필요합니다 (검토 대기).';
+            hasReviewRequired = true;
           }
         } else {
           results[q.id] = false;
@@ -603,6 +736,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       quizId,
       studentId: studentId || null,
       attemptId: attemptId || null,
+      status: hasReviewRequired ? 'REVIEW_REQUIRED' : 'COMPLETED',
       score,
       total: questions.length,
       percentage: questions.length > 0 ? Math.round((score / questions.length) * 100) : 0,
@@ -611,14 +745,9 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       gradedAt: Date.now(),
     };
 
+    // 6. 영구 저장소에 제출 완료 기록 (서버 재시작 후에도 멱등성 영구 보존)
     if (idempotencyKey) {
-      submissionCache.set(idempotencyKey, { result: payload, ts: Date.now() });
-      if (submissionCache.size > 2000) {
-        const cutoff = Date.now() - SUBMISSION_CACHE_TTL_MS;
-        for (const [k, v] of submissionCache) {
-          if (v.ts < cutoff) submissionCache.delete(k);
-        }
-      }
+      saveSubmissionRecord(idempotencyKey, payload);
     }
 
     res.json(payload);

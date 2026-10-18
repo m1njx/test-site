@@ -295,14 +295,48 @@ export async function appendProctorEvents(
     // flagScore 는 호출자(useProctor)가 로컬 누적으로 계산해 넘겨준다.
     // 덕분에 3초마다 읽기 1 + 쓰기 2 대신 쓰기 1회만 발생한다.
     const score = flagScore ?? 0;
+    
+    // 1. 루트 문서: 대시보드 조회를 위한 요약 및 레거시 배열 호환 유지
     await updateDoc(doc(db, 'proctorSessions', sessionId), {
       events: arrayUnion(...events.map((e) => stripUndefined(e))),
       flagScore: score,
       flagged: score >= PROCTOR_FLAG_THRESHOLD,
     });
+
+    // 2. 서브컬렉션: proctorSessions/{sessionId}/events/{eventId} 불변 개별 기록 (True Append-Only)
+    for (const e of events) {
+      const eventId = `ev_${e.ts}_${e.type}_${Math.random().toString(36).slice(2, 7)}`;
+      setDoc(doc(db, 'proctorSessions', sessionId, 'events', eventId), stripUndefined(e)).catch(() => {});
+    }
   } catch (e) {
     console.error('appendProctorEvents error:', e);
   }
+}
+
+/**
+ * 특정 세션의 감사 이벤트 목록 조회 (서브컬렉션 우선, 레거시 배열 자동 폴백)
+ */
+export async function getProctorSessionEvents(sessionId: string): Promise<ProctorEvent[]> {
+  if (isMock || !db) {
+    const all = lsGet<ProctorSession>(LS.proctor);
+    const s = all.find((x) => x.id === sessionId);
+    return s?.events || [];
+  }
+  try {
+    const subSnap = await getDocs(collection(db, 'proctorSessions', sessionId, 'events'));
+    if (!subSnap.empty) {
+      return subSnap.docs
+        .map((d) => d.data() as ProctorEvent)
+        .sort((a, b) => a.ts - b.ts);
+    }
+    const docSnap = await getDoc(doc(db, 'proctorSessions', sessionId));
+    if (docSnap.exists()) {
+      return (docSnap.data() as ProctorSession).events || [];
+    }
+  } catch (err) {
+    console.warn('getProctorSessionEvents error:', err);
+  }
+  return [];
 }
 
 export async function finishProctorSession(
