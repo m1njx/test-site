@@ -110,8 +110,17 @@ export default function ProctorLogBoard({ team }: Props) {
                 }}
               >
                 <div
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={Boolean(isOpen)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', outline: 'none' }}
                   onClick={() => setOpen((o) => ({ ...o, [s.id]: !o[s.id] }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setOpen((o) => ({ ...o, [s.id]: !o[s.id] }));
+                    }
+                  }}
                 >
                   {s.flagged && <Flag size={16} color="var(--incorrect)" />}
                   <div style={{ flex: 1 }}>

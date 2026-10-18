@@ -67,3 +67,31 @@ test('LMS: 80% anti-skip watch threshold validation', () => {
   const partialSec = rangesTotal(partialMerged);
   assert.equal(partialSec / duration >= 0.8, false);
 });
+
+test('LMS: formatAnswer formats single, multiple, and empty answers', () => {
+  function formatAnswer(q, val) {
+    if (val === undefined || val === null || val === '') return '(미입력)';
+    if (Array.isArray(val)) {
+      if (val.length === 0) return '(미입력)';
+      return val.map((v) => q.options?.[parseInt(v, 10)] || v).join(', ');
+    }
+    if (q.type === 'short') return String(val);
+    const parsed = parseInt(String(val), 10);
+    return !isNaN(parsed) && q.options?.[parsed] ? q.options[parsed] : String(val);
+  }
+
+  const multiQ = {
+    id: '1',
+    type: 'multiple-multi',
+    options: ['사과', '바나나', '포도'],
+  };
+
+  assert.equal(formatAnswer(multiQ, ['0', '2']), '사과, 포도');
+  assert.equal(formatAnswer(multiQ, []), '(미입력)');
+  assert.equal(formatAnswer(multiQ, undefined), '(미입력)');
+
+  const shortQ = { id: '2', type: 'short' };
+  assert.equal(formatAnswer(shortQ, 'print(1)'), 'print(1)');
+  assert.equal(formatAnswer(shortQ, ''), '(미입력)');
+});
+
