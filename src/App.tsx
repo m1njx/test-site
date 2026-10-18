@@ -301,15 +301,28 @@ export default function App() {
     }
   };
 
-  // Pyodide(수십 MB)는 주관식 채점 fallback 에만 쓰이므로 필요할 때 한 번만 받는다.
+  // Pyodide(수십 MB)는 주관식 채점 fallback 에만 쓰이므로 필요할 때 동적으로 주입하여 로드한다.
   const pyodidePromise = useRef<Promise<PyodideInterface> | null>(null);
   const ensurePyodide = useCallback(async (): Promise<PyodideInterface | null> => {
     if (pyodide) return pyodide;
     if (!pyodidePromise.current) {
       pyodidePromise.current = (async () => {
-        // index.html 의 로더 스크립트가 아직 준비되지 않았을 수 있어 잠시 기다린다
-        for (let i = 0; i < 20 && !window.loadPyodide; i++) {
-          await new Promise((r) => setTimeout(r, 250));
+        // Pyodide CDN 스크립트가 아직 없으면 동적으로 비동기 주입
+        if (typeof window !== 'undefined' && !window.loadPyodide) {
+          await new Promise<void>((resolve, reject) => {
+            const existing = document.querySelector('script[src*="pyodide"]');
+            if (existing) {
+              existing.addEventListener('load', () => resolve());
+              existing.addEventListener('error', () => reject(new Error('Pyodide script failed to load')));
+              return;
+            }
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js';
+            script.async = true;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Pyodide CDN 스크립트 로드 실패'));
+            document.head.appendChild(script);
+          });
         }
         if (!window.loadPyodide) throw new Error('Pyodide loader unavailable');
         return window.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/' });
@@ -371,6 +384,18 @@ export default function App() {
     }
   }, [answers, selectedQuiz, loggedInUser]);
 
+  // 퀴즈 응시 중 의도치 않은 탭 닫기/새로고침 방지 (데이터 손실 방어)
+  useEffect(() => {
+    if (currentView !== 'quiz' || showResults) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (Object.keys(answers).length > 0) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [currentView, showResults, answers]);
+
   useEffect(() => {
     gradeQuizRef.current = gradeQuiz;
   });
@@ -386,7 +411,7 @@ export default function App() {
   if (!loggedInUser) return <Login onLogin={() => setSessionNonce(n => n + 1)} />;
 
   const startQuiz = async (quiz: Quiz, ctx?: QuizLessonContext) => {
-    if (quiz.questions.length === 0) return;
+    if (quiz.questions.length === 0 || isGrading) return;
 
     setCourseCtx(ctx ?? null);
     setQuizOrigin(ctx ? 'course' : 'home');

@@ -144,7 +144,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
     if (quizToEdit) {
       const copy = JSON.parse(JSON.stringify(quizToEdit));
-      copy.id = `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`;
+      copy.id = `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 7)}`;
       copy.title = `${copy.title} (복제본)`;
       if (copy.isPublished === undefined) copy.isPublished = true;
       setActiveQuiz(copy);
@@ -200,7 +200,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       await saveStudent(newStudent);
       setNewStudent({ id: '', name: '', email: '' });
       onRefreshTeam();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert('팀원 저장 실패: ' + (e instanceof Error ? e.message : String(e)));
+    }
     setLoading(false);
   };
 
@@ -210,7 +213,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     try {
       await deleteStudent(id);
       onRefreshTeam();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert('팀원 삭제 실패: ' + (e instanceof Error ? e.message : String(e)));
+    }
     setLoading(false);
   };
 
@@ -225,7 +231,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 
   const addQuestion = (type: QuestionType) => {
     const q: Question = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).slice(2, 11),
       type,
       title: '',
       description: '',
@@ -800,7 +806,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <div style={{display: 'flex', gap: 8}}>
                   <button onClick={() => {
                     setActiveQuiz({
-                      id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`,
+                      id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 7)}`,
                       date: new Date().toISOString().split('T')[0],
                       title: '',
                       description: '',
