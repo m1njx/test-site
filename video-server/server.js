@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const { GoogleAuth } = require('google-auth-library');
 
 const PORT = process.env.PORT || 8080;
 const UPLOAD_TOKEN = process.env.UPLOAD_TOKEN || '';
@@ -93,6 +94,13 @@ function requireUploadToken(req, res, next) {
 }
 // 하위 호환 별칭
 const requireToken = requireUploadToken;
+
+async function requireUploadAuth(req, res, next) {
+  // 영상 업로드 및 파일 목록 조회는 관리자 전용 권한 필수
+  // 프론트엔드 번들에 노출될 수 있는 VITE_VIDEO_UPLOAD_TOKEN 단독으로는 관리자 권한으로 인정하지 않음
+  // 유효한 관리자 인증(Firebase Admin ID Token, Admin JWT, or ADMIN_API_KEY)을 필수로 요구함
+  return requireAdminAuth(req, res, next);
+}
 
 function decodeJwtPayload(token) {
   try {
@@ -214,7 +222,7 @@ async function checkAdminInFirestore(uid) {
   const baseUrl = getFirestoreBaseUrl();
   const url = `${baseUrl}/admins/${uid}`;
   try {
-    const res = await fetch(url, { headers: getFirestoreHeaders() });
+    const res = await fetch(url, { headers: await getFirestoreHeaders() });
     return res.ok && res.status === 200;
   } catch (err) {
     console.warn(`[Admin Check] Failed to query admins/${uid}:`, err.message);
@@ -341,7 +349,7 @@ const upload = multer({
   },
 });
 
-app.post('/upload', requireToken, rateLimit, (req, res) => {
+app.post('/upload', requireUploadAuth, rateLimit, (req, res) => {
   upload.single('file')(req, res, (err) => {
     if (err) {
       const tooBig = err.code === 'LIMIT_FILE_SIZE';
@@ -356,7 +364,7 @@ app.post('/upload', requireToken, rateLimit, (req, res) => {
 
 /* ----------------------------- 조회 ----------------------------- */
 // 파일명 목록은 사실상 강의 목록이므로 공개하지 않는다
-app.get('/list', requireToken, (_req, res) => {
+app.get('/list', requireUploadAuth, (_req, res) => {
   const files = fs
     .readdirSync(VIDEO_DIR)
     .filter((f) => !f.startsWith('.'))
@@ -642,26 +650,195 @@ function getFirestoreBaseUrl() {
   return `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
 }
 
-function isFirestoreConfigured() {
-  return Boolean(
-    process.env.FIRESTORE_EMULATOR_HOST ||
-    process.env.FIREBASE_SERVER_TOKEN ||
-    process.env.FIREBASE_AUTH_TOKEN ||
-    process.env.GCP_ACCESS_TOKEN
-  );
+/* -------------------- Google Auth & Credential Provider -------------------- */
+class ServerCredentialProvider {
+  constructor() {
+    this.cachedToken = null;
+    this.tokenExpiresAt = 0;
+    this.authClient = null;
+    this.customTokenProvider = null;
+    this.refreshPromise = null;
+  }
+
+  setMockTokenProvider(providerFn) {
+    this.customTokenProvider = providerFn;
+    this.cachedToken = null;
+    this.tokenExpiresAt = 0;
+    this.refreshPromise = null;
+  }
+
+  clearCache() {
+    this.cachedToken = null;
+    this.tokenExpiresAt = 0;
+    this.authClient = null;
+    this.customTokenProvider = null;
+    this.refreshPromise = null;
+  }
+
+  isConfigured() {
+    if (process.env.FIRESTORE_EMULATOR_HOST) return true;
+    if (this.customTokenProvider) return true;
+    if (
+      process.env.FIREBASE_SERVICE_ACCOUNT ||
+      process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS
+    ) {
+      return true;
+    }
+    if (
+      process.env.FIREBASE_SERVER_TOKEN ||
+      process.env.FIREBASE_AUTH_TOKEN ||
+      process.env.GCP_ACCESS_TOKEN
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  _parseServiceAccountJson(val) {
+    if (!val || typeof val !== 'string') return null;
+    const trimmed = val.trim();
+    if (trimmed.startsWith('{')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {}
+    }
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+      if (decoded.trim().startsWith('{')) {
+        return JSON.parse(decoded);
+      }
+    } catch {}
+    if (fs.existsSync(trimmed)) {
+      try {
+        return JSON.parse(fs.readFileSync(trimmed, 'utf8'));
+      } catch {}
+    }
+    return null;
+  }
+
+  getGoogleAuthClient() {
+    if (this.authClient) return this.authClient;
+
+    const scopes = [
+      'https://www.googleapis.com/auth/datastore',
+      'https://www.googleapis.com/auth/cloud-platform',
+    ];
+
+    let credentials = null;
+    const saEnv = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    if (saEnv) {
+      credentials = this._parseServiceAccountJson(saEnv);
+    }
+
+    const keyFilename = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
+    const authOptions = { scopes };
+    if (credentials) {
+      authOptions.credentials = credentials;
+      if (credentials.project_id && !process.env.FIREBASE_PROJECT_ID) {
+        authOptions.projectId = credentials.project_id;
+      }
+    } else if (keyFilename && fs.existsSync(keyFilename)) {
+      authOptions.keyFilename = keyFilename;
+    }
+
+    this.authClient = new GoogleAuth(authOptions);
+    return this.authClient;
+  }
+
+  async getAccessToken() {
+    // 1. 에뮬레이터 환경: owner 토큰 즉시 반환
+    if (process.env.FIRESTORE_EMULATOR_HOST) {
+      return { token: 'owner', source: 'emulator', expiresAt: Date.now() + 86400000 };
+    }
+
+    // 2. 인메모리 캐시 검사 (만료 5분 전까지 유효)
+    const now = Date.now();
+    const BUFFER_MS = 5 * 60 * 1000;
+    if (this.cachedToken && this.tokenExpiresAt > now + BUFFER_MS) {
+      return { token: this.cachedToken, source: 'cache', expiresAt: this.tokenExpiresAt };
+    }
+
+    // 동시 요청 시 중복 갱신 방지 (Coalescing)
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = (async () => {
+      try {
+        // 3. Mock / 테스트 주입 프로바이더
+        if (this.customTokenProvider) {
+          try {
+            const mockResult = await this.customTokenProvider();
+            const token = typeof mockResult === 'string' ? mockResult : mockResult?.token;
+            const expiresAt = mockResult?.expiresAt || (Date.now() + 3600000);
+            this.cachedToken = token;
+            this.tokenExpiresAt = expiresAt;
+            return { token, source: 'mock', expiresAt };
+          } catch (err) {
+            return { token: null, error: 'Mock provider failure: ' + err.message, source: 'mock' };
+          }
+        }
+        // 4. GoogleAuth 기반 Service Account / ADC 자격증명
+        const hasSa = Boolean(
+          process.env.FIREBASE_SERVICE_ACCOUNT ||
+          process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+          process.env.GOOGLE_APPLICATION_CREDENTIALS
+        );
+
+        if (hasSa) {
+          try {
+            const auth = this.getGoogleAuthClient();
+            const client = await auth.getClient();
+            const tokenRes = await client.getAccessToken();
+            const token = typeof tokenRes === 'string' ? tokenRes : tokenRes?.token;
+            if (token) {
+              const expiresInSec = tokenRes?.res?.data?.expires_in || 3600;
+              this.cachedToken = token;
+              this.tokenExpiresAt = Date.now() + expiresInSec * 1000;
+              return { token, source: 'google-auth', expiresAt: this.tokenExpiresAt };
+            }
+          } catch (err) {
+            console.warn('[ServerCredentialProvider] GoogleAuth 자격증명 획득 실패 (안전 처리됨):', err.message);
+          }
+        }
+
+        // 5. 하위 호환 폴백: 고정 정적 토큰
+        const staticToken =
+          process.env.FIREBASE_SERVER_TOKEN ||
+          process.env.FIREBASE_AUTH_TOKEN ||
+          process.env.GCP_ACCESS_TOKEN;
+        if (staticToken) {
+          return { token: staticToken, source: 'static-fallback', expiresAt: null };
+        }
+
+        return { token: null, error: '유효한 서버 자격증명이 구성되지 않았습니다.' };
+      } catch (err) {
+        return { token: null, error: err.message };
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
+  }
 }
 
-function getFirestoreHeaders() {
+const serverCredentialProvider = new ServerCredentialProvider();
+
+function isFirestoreConfigured() {
+  return serverCredentialProvider.isConfigured();
+}
+
+async function getFirestoreHeaders() {
   const headers = {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
   };
-  const token = process.env.FIREBASE_SERVER_TOKEN || process.env.FIREBASE_AUTH_TOKEN || process.env.GCP_ACCESS_TOKEN;
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  } else if (process.env.FIRESTORE_EMULATOR_HOST) {
-    // 에뮬레이터 환경에서는 테스트 격리 및 권한 정책에 따라 Admin 권한으로 동작
-    headers['Authorization'] = 'Bearer owner';
+  const authRes = await serverCredentialProvider.getAccessToken();
+  if (authRes && authRes.token) {
+    headers['Authorization'] = `Bearer ${authRes.token}`;
   }
   return headers;
 }
@@ -684,7 +861,7 @@ async function verifyStudentBinding(uid, studentId) {
   try {
     const baseUrl = getFirestoreBaseUrl();
     const url = `${baseUrl}/students/${studentId}`;
-    const res = await fetch(url, { headers: getFirestoreHeaders() });
+    const res = await fetch(url, { headers: await getFirestoreHeaders() });
     if (res.ok) {
       const doc = await res.json();
       const boundUid = doc.fields?.uid?.stringValue;
@@ -702,7 +879,7 @@ async function fetchFirestoreAttempt(attemptId) {
   const baseUrl = getFirestoreBaseUrl();
   const url = `${baseUrl}/quizAttempts/${attemptId}`;
   try {
-    const res = await fetch(url, { headers: getFirestoreHeaders() });
+    const res = await fetch(url, { headers: await getFirestoreHeaders() });
     if (res.ok) {
       const doc = await res.json();
       if (doc.fields) {
@@ -752,7 +929,7 @@ async function saveFirestoreAttempt(attemptId, attemptData) {
 
   const res = await fetch(commitUrl, {
     method: 'POST',
-    headers: getFirestoreHeaders(),
+    headers: await getFirestoreHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -793,7 +970,7 @@ async function saveFirestoreProgress(studentId, quizId, record) {
     let docExists = false;
 
     try {
-      const getRes = await fetch(docUrl, { headers: getFirestoreHeaders() });
+      const getRes = await fetch(docUrl, { headers: await getFirestoreHeaders() });
       if (getRes.ok) {
         const getDoc = await getRes.json();
         docExists = true;
@@ -855,7 +1032,7 @@ async function saveFirestoreProgress(studentId, quizId, record) {
 
     const commitRes = await fetch(commitUrl, {
       method: 'POST',
-      headers: getFirestoreHeaders(),
+      headers: await getFirestoreHeaders(),
       body: JSON.stringify({ writes: [write] }),
     });
 
@@ -968,7 +1145,7 @@ async function getOrFetchQuizKey(quizId) {
     try {
       const firestoreUrl = `${getFirestoreBaseUrl()}/quizAnswers/${quizId}`;
       const res = await fetch(firestoreUrl, {
-        headers: getFirestoreHeaders(),
+        headers: await getFirestoreHeaders(),
       });
       if (res.ok) {
         const docJson = await res.json();
@@ -1242,7 +1419,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
         try {
           const baseUrl = getFirestoreBaseUrl();
           const docId = `${studentId}_${quizId}`;
-          const getRes = await fetch(`${baseUrl}/progress/${docId}`, { headers: getFirestoreHeaders() });
+          const getRes = await fetch(`${baseUrl}/progress/${docId}`, { headers: await getFirestoreHeaders() });
           if (getRes.ok) {
             const getDoc = await getRes.json();
             const prevAttempts = fromFirestoreValue(getDoc.fields?.attempts);
@@ -1382,5 +1559,10 @@ module.exports = {
   checkAdminInFirestore,
   requireAdminAuth,
   requireUploadToken,
+  requireUploadAuth,
+  serverCredentialProvider,
+  ServerCredentialProvider,
+  getFirestoreHeaders,
+  isFirestoreConfigured,
   SERVER_SIGNING_SECRET,
 };

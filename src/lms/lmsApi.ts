@@ -1,4 +1,4 @@
-import { db, isMock } from '../firebase';
+import { db, isMock, auth } from '../firebase';
 import {
   collection,
   doc,
@@ -398,16 +398,28 @@ export async function uploadCourseVideo(
   }
 
   const durationSec = await readVideoDuration(file).catch(() => undefined);
-  // 관리자 비밀번호를 그대로 쓰지 않는다 — 이 토큰은 번들에 포함되어 공개되므로
-  // 비밀번호와 반드시 분리해야 한다. (video-server/README.md 참고)
   const token = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
+
+  let idToken = '';
+  if (auth?.currentUser) {
+    try {
+      idToken = await auth.currentUser.getIdToken();
+    } catch (e) {
+      console.warn('[uploadVideo] Firebase ID Token 조회 실패:', e);
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('file', file);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${VIDEO_SERVER_URL}/upload`);
-    xhr.setRequestHeader('x-upload-token', token);
+    if (idToken) {
+      xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
+    }
+    if (token) {
+      xhr.setRequestHeader('x-upload-token', token);
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };

@@ -1,8 +1,29 @@
 import type { Question } from './data';
+import { auth } from './firebase';
 
 // 서버 URL (설정 시 브라우저에서 직접 Gemini 호출하지 않고 백엔드 프록시 경유)
 const SERVER_URL = (import.meta.env.VITE_VIDEO_SERVER_URL || '').replace(/\/$/, '');
 const UPLOAD_TOKEN = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
+
+async function getAdminHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (UPLOAD_TOKEN) {
+    headers['x-upload-token'] = UPLOAD_TOKEN;
+  }
+  if (auth?.currentUser) {
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+    } catch (e) {
+      console.warn('[Gemini] Firebase ID Token 조회 실패:', e);
+    }
+  }
+  return headers;
+}
 
 // .env에서 모델 목록 읽기 (쉼표로 구분)
 const GEMINI_MODELS_ENV = import.meta.env.VITE_GEMINI_MODELS || 'gemini-2.5-flash,gemini-3.1-flash-lite,gemini-3.5-flash';
@@ -15,12 +36,10 @@ export async function callGeminiWithFallback(apiKey: string, prompt: string): Pr
   // 1. 서버 프록시가 구성되어 있으면 서버를 통해 안전하게 호출
   if (SERVER_URL) {
     try {
+      const headers = await getAdminHeaders();
       const res = await fetch(`${SERVER_URL}/api/ai-explain`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-upload-token': UPLOAD_TOKEN,
-        },
+        headers,
         body: JSON.stringify({ prompt }),
       });
       if (res.ok) {
@@ -177,12 +196,10 @@ export async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ c
   // 1. 보안 권장: 서버 프록시 경유
   if (SERVER_URL) {
     try {
+      const headers = await getAdminHeaders();
       const res = await fetch(`${SERVER_URL}/api/ai-preview`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-upload-token': UPLOAD_TOKEN,
-        },
+        headers,
         body: JSON.stringify({ title: qTitle, description: qDesc }),
       });
       if (res.ok) {
