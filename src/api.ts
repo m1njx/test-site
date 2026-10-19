@@ -182,6 +182,15 @@ export async function saveScore(
     }
     
     if (!db) return;
+
+    // 서버가 공식 채점 후 progress 및 quizAttempts를 원자적으로 영구 저장했으므로,
+    // 클라이언트의 권한 없는 setDoc 대신 캐시를 무효화하여 최신 공식 서버 데이터를 반영
+    if (options?.submissionToken) {
+      delete FIREBASE_CACHE.progress[studentId];
+      delete FIREBASE_CACHE.quizResults[quizId];
+      return;
+    }
+
     const docRef = doc(db, 'progress', `${studentId}_${quizId}`);
     const existingSnap = await getDoc(docRef);
     if (existingSnap.exists()) {
@@ -407,11 +416,9 @@ async function getAdminAuthHeaders(adminTokenOrKey?: string): Promise<Record<str
         headers['Authorization'] = `Bearer ${idToken}`;
         return headers;
       }
-    } catch {}
-  }
-  const viteAdminKey = (import.meta.env as Record<string, string | undefined>).VITE_ADMIN_API_KEY;
-  if (viteAdminKey) {
-    headers['x-admin-key'] = viteAdminKey;
+    } catch (err) {
+      console.warn('[AdminAuth] Firebase ID Token 조회 실패:', err);
+    }
   }
   return headers;
 }

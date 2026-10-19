@@ -20,7 +20,7 @@ rules_version = '2';
 //    코스 및 공지사항. 학생 읽기, 관리자 쓰기.
 //
 // 6. progress/{docId}
-//    성적 문서 (${studentId}_${quizId}). 본인만 작성, 점수 무결성 검증, 삭제 절대 불가.
+//    공식 성적 문서 (${studentId}_${quizId}). 본인/관리자 읽기, 서버/관리자만 생성/수정 가능 (학생 직접 작성 차단), 삭제 절대 불가.
 //
 // 7. lessonProgress/{docId}
 //    강의 진도 문서 (${studentId}_${lessonId}). 본인만 작성, 삭제 절대 불가.
@@ -288,16 +288,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    /* ----------------------------- 성적 ----------------------------- */
+    /* ----------------------------- 공식 성적 ----------------------------- */
+    // 공식 성적은 신뢰할 수 있는 서버(관리자 권한)만 생성 및 갱신 가능.
+    // 학생의 직접 생성 및 변조는 일체 차단되며, 본인 성적 읽기만 허용.
     match /progress/{docId} {
       allow read: if isAdmin() || ownsStudent(resource.data.studentId);
-      allow create: if (isAdmin() || ownsStudent(request.resource.data.studentId))
-                    && isValidProgress(docId, request.resource.data);
-      allow update: if isValidProgress(docId, request.resource.data)
-                    && (isAdmin()
-                        || (ownsStudent(resource.data.studentId)
-                            && request.resource.data.studentId == resource.data.studentId
-                            && request.resource.data.quizId == resource.data.quizId));
+      allow create: if isAdmin() && isValidProgress(docId, request.resource.data);
+      allow update: if isAdmin() && isValidProgress(docId, request.resource.data);
       allow delete: if false; // 성적은 누구도 삭제 불가
     }
 

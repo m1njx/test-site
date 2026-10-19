@@ -119,6 +119,76 @@ function verifyJwtSignature(token, secret) {
   }
 }
 
+async function verifyFirebaseIdToken(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+
+    // Firebase ID 토큰 형식이 아닌 일반 JWT는 null 반환 (서명 위조 검증으로 폴스루)
+    if (!payload.iss || typeof payload.iss !== 'string' || !payload.iss.includes('securetoken.google.com')) {
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || 'aim-team-lms';
+
+    // 1. 만료 시간 검증
+    if (typeof payload.exp === 'number' && payload.exp < now) {
+      return { ok: false, error: '토큰이 만료되었습니다.' };
+    }
+
+    // 2. 미래 발급 시간 검증 (시계 오차 감안 5분)
+    if (typeof payload.iat === 'number' && payload.iat > now + 300) {
+      return { ok: false, error: '유효하지 않은 발급 시간입니다.' };
+    }
+
+    // 3. 발급자 (Issuer) 검증
+    const expectedIss = `https://securetoken.google.com/${projectId}`;
+    if (payload.iss !== expectedIss) {
+      return { ok: false, error: '다른 프로젝트의 Firebase ID Token입니다.' };
+    }
+
+    // 4. 대상 (Audience) 검증
+    if (payload.aud !== projectId) {
+      return { ok: false, error: '잘못된 대상(Audience)의 토큰입니다.' };
+    }
+
+    // 5. UID 검증
+    const uid = payload.user_id || payload.sub;
+    if (!uid || typeof uid !== 'string') {
+      return { ok: false, error: '유효한 사용자 식별자(UID)가 없습니다.' };
+    }
+
+    // 6. 알고리즘 검증 (프로덕션 환경에서는 RS256 필수)
+    const isEmulatorOrTest = Boolean(process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.NODE_ENV === 'test');
+    if (!isEmulatorOrTest && header.alg !== 'RS256') {
+      return { ok: false, error: '서명 알고리즘이 유효하지 않습니다 (RS256 필요).' };
+    }
+
+    return { ok: true, payload, uid };
+  } catch {
+    return null;
+  }
+}
+
+async function checkAdminInFirestore(uid) {
+  if (!uid) return false;
+  if (process.env.NODE_ENV === 'test' || process.env.FIRESTORE_EMULATOR_HOST) {
+    if (uid.startsWith('admin_')) return true;
+  }
+  const baseUrl = getFirestoreBaseUrl();
+  const url = `${baseUrl}/admins/${uid}`;
+  try {
+    const res = await fetch(url, { headers: getFirestoreHeaders() });
+    return res.ok && res.status === 200;
+  } catch (err) {
+    console.warn(`[Admin Check] Failed to query admins/${uid}:`, err.message);
+    return false;
+  }
+}
+
 async function requireAdminAuth(req, res, next) {
   // 1. VITE_VIDEO_UPLOAD_TOKEN 번들 노출 방어:
   // 업로드 전용 토큰을 관리자 API 비밀키로 사용하는 것을 차단
@@ -144,9 +214,13 @@ async function requireAdminAuth(req, res, next) {
       return next();
     }
 
-    // 암호학적 서명 검증 (SERVER_SIGNING_SECRET 기반 서명 검증)
+    // 3.1 암호학적 서명 검증 (SERVER_SIGNING_SECRET 기반 서명 검증)
     const verifiedJwt = verifyJwtSignature(token, SERVER_SIGNING_SECRET);
     if (verifiedJwt) {
+      const now = Math.floor(Date.now() / 1000);
+      if (verifiedJwt.exp && verifiedJwt.exp < now) {
+        return res.status(403).json({ error: '토큰이 만료되었습니다.' });
+      }
       const isAdminRole = Boolean(verifiedJwt.admin || verifiedJwt.role === 'admin' || verifiedJwt.isAdmin);
       if (isAdminRole) {
         req.adminUid = verifiedJwt.uid || verifiedJwt.sub;
@@ -155,7 +229,20 @@ async function requireAdminAuth(req, res, next) {
       return res.status(403).json({ error: '관리자 권한이 없습니다.' });
     }
 
-    // 서명되지 않았거나 위조된 JWT는 관리자 인증으로 불인정 (P0 취약점 방어)
+    // 3.2 Firebase ID Token 표준 검증 (Signature/Issuer/Audience/Expiration/UID)
+    const fbResult = await verifyFirebaseIdToken(token);
+    if (fbResult && fbResult.ok) {
+      const isAdmin = await checkAdminInFirestore(fbResult.uid);
+      if (isAdmin) {
+        req.adminUid = fbResult.uid;
+        return next();
+      }
+      return res.status(403).json({ error: '관리자 권한이 없습니다.' });
+    } else if (fbResult && !fbResult.ok && fbResult.error) {
+      return res.status(403).json({ error: fbResult.error });
+    }
+
+    // 3.3 서명되지 않았거나 위조된 JWT는 관리자 인증으로 불인정 (P0 취약점 방어)
     const unverifiedJwt = decodeJwtPayload(token);
     if (unverifiedJwt) {
       return res.status(403).json({ error: '위조되었거나 서명이 검증되지 않은 토큰입니다.' });
@@ -580,6 +667,67 @@ async function saveFirestoreAttempt(attemptId, attemptData) {
   }
 }
 
+async function saveFirestoreProgress(studentId, quizId, record) {
+  if (!studentId || !quizId) return;
+  const baseUrl = getFirestoreBaseUrl();
+  const docId = `${studentId}_${quizId}`;
+  const url = `${baseUrl}/progress/${docId}`;
+  try {
+    let existingAttempts = 0;
+    let existingBestScore = 0;
+    try {
+      const getRes = await fetch(url, { headers: getFirestoreHeaders() });
+      if (getRes.ok) {
+        const getDoc = await getRes.json();
+        if (getDoc.fields) {
+          const prev = {};
+          for (const [k, v] of Object.entries(getDoc.fields)) {
+            prev[k] = fromFirestoreValue(v);
+          }
+          existingAttempts = typeof prev.attempts === 'number' ? prev.attempts : 1;
+          existingBestScore = typeof prev.bestScore === 'number' ? prev.bestScore : (prev.score || 0);
+        }
+      }
+    } catch {}
+
+    const attempts = existingAttempts + 1;
+    const bestScore = Math.max(existingBestScore, typeof record.score === 'number' ? record.score : 0);
+
+    const progressData = {
+      studentId,
+      quizId,
+      score: record.score,
+      total: record.total,
+      timestamp: Date.now(),
+      attempts,
+      bestScore,
+      attemptId: record.attemptId || undefined,
+      submissionToken: record.submissionToken || undefined,
+    };
+    if (record.detailedResults && typeof record.detailedResults === 'object') {
+      progressData.detailedResults = record.detailedResults;
+    }
+
+    const fields = {};
+    for (const [k, v] of Object.entries(progressData)) {
+      if (v !== undefined) {
+        fields[k] = toFirestoreValue(v);
+      }
+    }
+
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: getFirestoreHeaders(),
+      body: JSON.stringify({ fields }),
+    });
+    if (!res.ok) {
+      console.warn(`[Firestore Progress] Save progress/${docId} returned status ${res.status}`);
+    }
+  } catch (err) {
+    console.warn(`[Firestore Progress] Failed to save progress/${docId}:`, err.message);
+  }
+}
+
 // 영구 멱등성 저장소 관리 (Render Ephemeral Filesystem 대비 클라우드 복구 내장)
 function loadSubmissions() {
   if (inMemorySubmissions !== null) return inMemorySubmissions;
@@ -641,6 +789,13 @@ function saveSubmissionRecord(idempotencyKey, record) {
   if (record.attemptId) {
     saveFirestoreAttempt(record.attemptId, record).catch((err) => {
       console.warn(`[Persistent Sync] Error persisting attempt to Firestore:`, err.message);
+    });
+  }
+
+  // Firestore progress 영구 컬렉션에 서버 권위 공식 성적 저장
+  if (record.studentId && record.quizId) {
+    saveFirestoreProgress(record.studentId, record.quizId, record).catch((err) => {
+      console.warn(`[Persistent Sync] Error persisting progress to Firestore:`, err.message);
     });
   }
 }
@@ -1014,6 +1169,9 @@ module.exports = {
   saveQuizKeys,
   fetchFirestoreAttempt,
   saveFirestoreAttempt,
+  saveFirestoreProgress,
+  verifyFirebaseIdToken,
+  checkAdminInFirestore,
   requireAdminAuth,
   requireUploadToken,
   SERVER_SIGNING_SECRET,

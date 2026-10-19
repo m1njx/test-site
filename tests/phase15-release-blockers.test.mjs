@@ -31,6 +31,9 @@ const {
   loadSubmissions,
   saveSubmissionRecord,
   loadSubmissionRecord,
+  saveFirestoreProgress,
+  verifyFirebaseIdToken,
+  checkAdminInFirestore,
   SERVER_SIGNING_SECRET,
 } = require('../video-server/server.js');
 
@@ -545,4 +548,128 @@ test('TEST P: 구버전 퀴즈 마이그레이션 후 학생 뷰 정답/해설 �
   // Secret store retains answers
   assert.deepEqual(secretQuizAnswers.questions[0].correctAnswers, ['0']);
   assert.equal(secretQuizAnswers.questions[0].explanation, 'FCFS는 먼저 도착한 프로세스를 먼저 처리합니다.');
+});
+
+// ---------------------------------------------------------------------------
+// TEST Q: 브라우저 코드 내 관리자 비밀키(VITE_ADMIN_API_KEY) 및 UPLOAD_TOKEN 미노출 검증
+// ---------------------------------------------------------------------------
+test('TEST Q: 클라이언트 소스 및 빌드 결과물 내 VITE_ADMIN_API_KEY 미노출 검증', () => {
+  const apiSource = fs.readFileSync(path.resolve(__dirname, '..', 'src', 'api.ts'), 'utf8');
+  assert.equal(apiSource.includes('VITE_ADMIN_API_KEY'), false, 'VITE_ADMIN_API_KEY must be removed from src/api.ts');
+
+  // Verify that getAdminAuthHeaders does not fall back to client admin key
+  assert.match(apiSource, /async function getAdminAuthHeaders/);
+  assert.equal(apiSource.includes("headers['x-admin-key'] = viteAdminKey"), false);
+});
+
+// ---------------------------------------------------------------------------
+// TEST R: Firebase ID Token 만료, 발급자, 대상 불일치 시 관리자 API 거부 검증
+// ---------------------------------------------------------------------------
+test('TEST R: Firebase ID Token 만료, 발급자, 대상 불일치 시 관리자 API 거부 검증', async () => {
+  const now = Math.floor(Date.now() / 1000);
+
+  // 1. 만료된 토큰
+  const expiredToken = createTestJwt({
+    iss: 'https://securetoken.google.com/aim-team-lms',
+    aud: 'aim-team-lms',
+    sub: 'admin_test_expired',
+    user_id: 'admin_test_expired',
+    exp: now - 3600,
+    iat: now - 7200,
+  });
+  const resExpired = await fetch(`${baseUrl}/api/quiz-keys/status`, {
+    headers: { Authorization: `Bearer ${expiredToken}` },
+  });
+  assert.equal(resExpired.status, 403);
+
+  // 2. 다른 프로젝트 토큰 (Issuer mismatch)
+  const wrongProjectToken = createTestJwt({
+    iss: 'https://securetoken.google.com/malicious-project',
+    aud: 'malicious-project',
+    sub: 'admin_test_hacker',
+    user_id: 'admin_test_hacker',
+    exp: now + 3600,
+    iat: now,
+  });
+  const resWrongProject = await fetch(`${baseUrl}/api/quiz-keys/status`, {
+    headers: { Authorization: `Bearer ${wrongProjectToken}` },
+  });
+  assert.equal(resWrongProject.status, 403);
+
+  // 3. 일반 학생 UID의 관리자 API 요청
+  const studentFbToken = createTestJwt({
+    iss: 'https://securetoken.google.com/aim-team-lms',
+    aud: 'aim-team-lms',
+    sub: 'student_normal_user',
+    user_id: 'student_normal_user',
+    exp: now + 3600,
+    iat: now,
+  });
+  const resStudent = await fetch(`${baseUrl}/api/quiz-keys/status`, {
+    headers: { Authorization: `Bearer ${studentFbToken}` },
+  });
+  assert.equal(resStudent.status, 403);
+});
+
+// ---------------------------------------------------------------------------
+// TEST S: 서명되지 않았거나 위조된 JWT 관리자 API 거부 검증
+// ---------------------------------------------------------------------------
+test('TEST S: 서명되지 않았거나 위조된 JWT 관리자 API 거부 검증', async () => {
+  // 위조된 서명
+  const header = base64Url({ alg: 'HS256', typ: 'JWT' });
+  const payload = base64Url({ uid: 'fake_admin', role: 'admin', admin: true });
+  const fakeSig = crypto.createHmac('sha256', 'wrong-secret').update(`${header}.${payload}`).digest('base64url');
+  const forgedToken = `${header}.${payload}.${fakeSig}`;
+
+  const res = await fetch(`${baseUrl}/api/quiz-keys/status`, {
+    headers: { Authorization: `Bearer ${forgedToken}` },
+  });
+  assert.equal(res.status, 403);
+  const data = await res.json();
+  assert.match(data.error, /위조|서명|권한/);
+});
+
+// ---------------------------------------------------------------------------
+// TEST T: Firestore Security Rules 공식 성적(progress) 학생 직접 쓰기 차단 검증
+// ---------------------------------------------------------------------------
+test('TEST T: Firestore Security Rules 공식 성적(progress) 학생 직접 쓰기 차단 검증', () => {
+  const firestoreRulesSource = fs.readFileSync(path.resolve(__dirname, '..', 'firestore.rules'), 'utf8');
+
+  // match /progress/{docId} must allow create and update ONLY if isAdmin()
+  assert.match(firestoreRulesSource, /match \/progress\/\{docId\}/);
+  assert.match(firestoreRulesSource, /allow create:\s*if\s*isAdmin\(\)\s*&&\s*isValidProgress/);
+  assert.match(firestoreRulesSource, /allow update:\s*if\s*isAdmin\(\)\s*&&\s*isValidProgress/);
+  assert.match(firestoreRulesSource, /allow delete:\s*if\s*false;/);
+
+  // Read allowed for own student or admin
+  assert.match(firestoreRulesSource, /allow read:\s*if\s*isAdmin\(\)\s*\|\|\s*ownsStudent\(resource\.data\.studentId\);/);
+});
+
+// ---------------------------------------------------------------------------
+// TEST U: 서버 채점 완료 시 progress 컬렉션 공식 성적 원자적 동기화 검증
+// ---------------------------------------------------------------------------
+test('TEST U: 서버 채점 완료 시 progress 컬렉션 공식 성적 원자적 동기화 검증', async () => {
+  const attemptId = `att-sync-${Date.now()}`;
+  const res = await fetch(`${baseUrl}/api/grade-submission`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${studentToken}`,
+    },
+    body: JSON.stringify({
+      quizId: 'quiz-os-101',
+      studentId: '2026001',
+      attemptId,
+      answers: {
+        q1: ['0'], // 정답 (1점)
+        q2: '페이징',
+      },
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.ok, true);
+  assert.equal(data.score, 1);
+  assert.ok(data.submissionToken);
 });
