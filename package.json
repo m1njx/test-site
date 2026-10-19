@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test tests/**/*.test.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:emulator": "firebase emulators:exec --only firestore --project demo-aim-lms-gate \"node --test tests/emulator/**/*.test.mjs\"",
+    "test:all": "npm test && npm run test:emulator",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
