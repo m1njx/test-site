@@ -119,6 +119,24 @@ function verifyJwtSignature(token, secret) {
   }
 }
 
+let googleCertsCache = null;
+let googleCertsExpiry = 0;
+
+async function getGooglePublicCerts() {
+  if (googleCertsCache && Date.now() < googleCertsExpiry) {
+    return googleCertsCache;
+  }
+  try {
+    const res = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+    if (res.ok) {
+      googleCertsCache = await res.json();
+      googleCertsExpiry = Date.now() + 3600 * 1000;
+      return googleCertsCache;
+    }
+  } catch {}
+  return null;
+}
+
 async function verifyFirebaseIdToken(token) {
   try {
     const parts = token.split('.');
@@ -134,14 +152,14 @@ async function verifyFirebaseIdToken(token) {
     const now = Math.floor(Date.now() / 1000);
     const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || 'aim-team-lms';
 
-    // 1. 만료 시간 검증
-    if (typeof payload.exp === 'number' && payload.exp < now) {
-      return { ok: false, error: '토큰이 만료되었습니다.' };
+    // 1. 만료 시간 필수 및 검증 (누락 시 차단)
+    if (typeof payload.exp !== 'number' || payload.exp < now) {
+      return { ok: false, error: '토큰이 만료되었거나 exp 필드가 올바르지 않습니다.' };
     }
 
-    // 2. 미래 발급 시간 검증 (시계 오차 감안 5분)
-    if (typeof payload.iat === 'number' && payload.iat > now + 300) {
-      return { ok: false, error: '유효하지 않은 발급 시간입니다.' };
+    // 2. 미래 발급 시간 필수 및 검증 (시계 오차 감안 5분)
+    if (typeof payload.iat !== 'number' || payload.iat > now + 300) {
+      return { ok: false, error: '유효하지 않은 발급 시간(iat)입니다.' };
     }
 
     // 3. 발급자 (Issuer) 검증
@@ -161,10 +179,25 @@ async function verifyFirebaseIdToken(token) {
       return { ok: false, error: '유효한 사용자 식별자(UID)가 없습니다.' };
     }
 
-    // 6. 알고리즘 검증 (프로덕션 환경에서는 RS256 필수)
-    const isEmulatorOrTest = Boolean(process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.NODE_ENV === 'test');
-    if (!isEmulatorOrTest && header.alg !== 'RS256') {
+    // 6. 알고리즘 검증 (RS256 필수)
+    if (header.alg !== 'RS256') {
       return { ok: false, error: '서명 알고리즘이 유효하지 않습니다 (RS256 필요).' };
+    }
+
+    // 7. 암호학적 서명 검증 (에뮬레이터/테스트 모드가 아닌 실제 프로덕션 환경)
+    const isEmulatorOrTest = Boolean(process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST || process.env.NODE_ENV === 'test');
+    if (!isEmulatorOrTest) {
+      const certs = await getGooglePublicCerts();
+      if (!certs || !header.kid || !certs[header.kid]) {
+        return { ok: false, error: 'Google 공개 인증서를 찾을 수 없어 서명을 검증할 수 없습니다.' };
+      }
+      const certPem = certs[header.kid];
+      const verifier = crypto.createVerify('RSA-SHA256');
+      verifier.update(`${parts[0]}.${parts[1]}`);
+      const validSig = verifier.verify(certPem, parts[2], 'base64url');
+      if (!validSig) {
+        return { ok: false, error: 'Firebase 서명 검증에 실패했습니다 (위조된 토큰).' };
+      }
     }
 
     return { ok: true, payload, uid };
@@ -690,8 +723,21 @@ async function saveFirestoreProgress(studentId, quizId, record) {
       }
     } catch {}
 
-    const attempts = existingAttempts + 1;
-    const bestScore = Math.max(existingBestScore, typeof record.score === 'number' ? record.score : 0);
+    // 동시성 레이스 컨디션 및 업데이트 유실 방어:
+    // 로컬 제출 캐시(submissions) 및 Firestore 기존 문서 양쪽에서 이력을 취합하여 단조 증가 보장
+    const allSubs = loadSubmissions();
+    const studentHistory = Object.values(allSubs).filter(
+      (s) => s.studentId === studentId && s.quizId === quizId
+    );
+    let maxHistoricalScore = typeof record.score === 'number' ? record.score : 0;
+    for (const sub of studentHistory) {
+      if (typeof sub.score === 'number' && sub.score > maxHistoricalScore) {
+        maxHistoricalScore = sub.score;
+      }
+    }
+
+    const attempts = Math.max(existingAttempts + 1, studentHistory.length);
+    const bestScore = Math.max(existingBestScore, maxHistoricalScore);
 
     const progressData = {
       studentId,
@@ -767,7 +813,7 @@ async function loadSubmissionRecord(idempotencyKey, quizId, studentId, attemptId
   return null;
 }
 
-function saveSubmissionRecord(idempotencyKey, record) {
+async function saveSubmissionRecord(idempotencyKey, record) {
   const all = loadSubmissions();
   all[idempotencyKey] = {
     ...record,
@@ -785,18 +831,22 @@ function saveSubmissionRecord(idempotencyKey, record) {
     } catch {}
   }
 
-  // Firestore quizAttempts 영구 컬렉션에 비동기 복제 (Render Ephemeral Storage 방어)
+  // Firestore quizAttempts 영구 컬렉션에 원자적 동기화
   if (record.attemptId) {
-    saveFirestoreAttempt(record.attemptId, record).catch((err) => {
+    try {
+      await saveFirestoreAttempt(record.attemptId, record);
+    } catch (err) {
       console.warn(`[Persistent Sync] Error persisting attempt to Firestore:`, err.message);
-    });
+    }
   }
 
   // Firestore progress 영구 컬렉션에 서버 권위 공식 성적 저장
-  if (record.studentId && record.quizId) {
-    saveFirestoreProgress(record.studentId, record.quizId, record).catch((err) => {
+  if (record.canPersistProgress !== false && record.studentId && record.quizId) {
+    try {
+      await saveFirestoreProgress(record.studentId, record.quizId, record);
+    } catch (err) {
       console.warn(`[Persistent Sync] Error persisting progress to Firestore:`, err.message);
-    });
+    }
   }
 }
 
@@ -1004,11 +1054,36 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       return res.status(400).json({ error: 'answers 객체가 필요합니다.' });
     }
 
-    // 0. 미인증 사용자 제출 검증 (TEST K)
+    // 0. 미인증 사용자 제출 검증 및 학생 신원 바인딩 강제 (P1 결함 방어)
     const authHeader = req.get('authorization') || '';
     if (!studentId && !authHeader) {
       return res.status(401).json({ error: '인증되지 않은 사용자입니다. 로그인 후 제출해주세요.' });
     }
+
+    let authenticatedStudentId = null;
+    let isAuthenticated = false;
+    if (authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      const verified = verifyJwtSignature(token, SERVER_SIGNING_SECRET);
+      if (verified) {
+        authenticatedStudentId = verified.studentId || verified.uid;
+        isAuthenticated = true;
+      } else {
+        const fbResult = await verifyFirebaseIdToken(token);
+        if (fbResult && fbResult.ok) {
+          authenticatedStudentId = fbResult.uid;
+          isAuthenticated = true;
+        }
+      }
+    }
+
+    // 학생 ID 변조/도용 방어: 인증 토큰이 제공된 경우 식별자 일치 검증
+    if (authenticatedStudentId && studentId && authenticatedStudentId !== studentId) {
+      return res.status(403).json({ error: '해당 제출 시도에 대한 접근 권한이 없습니다.' });
+    }
+
+    // 프로덕션 환경에서는 인증되지 않은 임의 학번 제출의 공식 Firestore progress 저장을 차단
+    const canPersistProgress = isAuthenticated || process.env.NODE_ENV === 'test';
 
     // 1. 영구 멱등성 및 소유권 검사 (서버 재시작/로컬 JSON 삭제 후에도 동일 attemptId의 중복 채점 및 과금 완전 차단)
     const idempotencyKey = attemptId ? `${quizId}:${studentId || 'anon'}:${attemptId}` : null;
@@ -1132,6 +1207,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
       results,
       detailedResults,
       gradedAt: Date.now(),
+      canPersistProgress,
     };
 
     // 서버 권위 HMAC 서명 생성 (클라이언트 변조 방지)
@@ -1143,7 +1219,7 @@ app.post('/api/grade-submission', submissionRateLimit, async (req, res) => {
 
     // 6. 영구 저장소에 제출 완료 기록 (서버 재시작 후에도 멱등성 영구 보존)
     if (idempotencyKey) {
-      saveSubmissionRecord(idempotencyKey, payload);
+      await saveSubmissionRecord(idempotencyKey, payload);
     }
 
     res.json(payload);
