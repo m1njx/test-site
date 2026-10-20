@@ -9,14 +9,22 @@ import {
 
 const FLUSH_MS = 3000;
 
+interface WebkitDocument extends Document {
+  webkitFullscreenElement?: Element;
+}
+interface WebkitHTMLElement extends HTMLElement {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+}
+
 export function isFullscreen(): boolean {
-  return !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+  return !!(document.fullscreenElement || (document as WebkitDocument).webkitFullscreenElement);
 }
 export async function enterFullscreen(el?: HTMLElement) {
   const target = el || document.documentElement;
   try {
+    const webkitTarget = target as WebkitHTMLElement;
     if (target.requestFullscreen) await target.requestFullscreen();
-    else if ((target as any).webkitRequestFullscreen) (target as any).webkitRequestFullscreen();
+    else if (webkitTarget.webkitRequestFullscreen) webkitTarget.webkitRequestFullscreen();
   } catch {
     /* 사용자 제스처 없이 호출되면 실패 — 무시 */
   }
@@ -163,7 +171,7 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
     window.addEventListener('blur', onBlur);
     window.addEventListener('focus', onFocus);
     document.addEventListener('fullscreenchange', onFsChange);
-    document.addEventListener('webkitfullscreenchange', onFsChange as any);
+    document.addEventListener('webkitfullscreenchange', onFsChange as EventListener);
     document.addEventListener('copy', onCopy);
     document.addEventListener('paste', onPaste);
     document.addEventListener('cut', onCut);
@@ -179,7 +187,7 @@ export function useProctor({ enabled, sessionId, onEvent }: Options): ProctorSta
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('fullscreenchange', onFsChange);
-      document.removeEventListener('webkitfullscreenchange', onFsChange as any);
+      document.removeEventListener('webkitfullscreenchange', onFsChange as EventListener);
       document.removeEventListener('copy', onCopy);
       document.removeEventListener('paste', onPaste);
       document.removeEventListener('cut', onCut);

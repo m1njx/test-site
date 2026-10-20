@@ -605,14 +605,31 @@ body.dark .option-btn.selected {
 
 body.dark .lms-card { background: var(--surface); }
 
-/* 관리자 탭바: 좁은 화면에서 줄바꿈 */
+/* 관리자 탭바: 좁은 화면에서 줄바꿈 대신 가로 스크롤 가능한 세그먼트 컨트롤 */
 .admin-tabbar {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   background: var(--bg-color);
   padding: 4px;
   border-radius: 12px;
+  max-width: 100%;
+}
+.admin-tabbar::-webkit-scrollbar {
+  display: none;
+}
+.admin-tabbar button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+@media (min-width: 900px) {
+  .admin-tabbar {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 /* ===== 접근성 / 공통 ===== */

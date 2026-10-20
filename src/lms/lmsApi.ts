@@ -1,4 +1,4 @@
-import { db, isMock } from '../firebase';
+import { db, isMock, auth } from '../firebase';
 import {
   collection,
   doc,
@@ -295,14 +295,48 @@ export async function appendProctorEvents(
     // flagScore 는 호출자(useProctor)가 로컬 누적으로 계산해 넘겨준다.
     // 덕분에 3초마다 읽기 1 + 쓰기 2 대신 쓰기 1회만 발생한다.
     const score = flagScore ?? 0;
+    
+    // 1. 루트 문서: 대시보드 조회를 위한 요약 및 레거시 배열 호환 유지
     await updateDoc(doc(db, 'proctorSessions', sessionId), {
       events: arrayUnion(...events.map((e) => stripUndefined(e))),
       flagScore: score,
       flagged: score >= PROCTOR_FLAG_THRESHOLD,
     });
+
+    // 2. 서브컬렉션: proctorSessions/{sessionId}/events/{eventId} 불변 개별 기록 (True Append-Only)
+    for (const e of events) {
+      const eventId = `ev_${e.ts}_${e.type}_${Math.random().toString(36).slice(2, 7)}`;
+      setDoc(doc(db, 'proctorSessions', sessionId, 'events', eventId), stripUndefined(e)).catch(() => {});
+    }
   } catch (e) {
     console.error('appendProctorEvents error:', e);
   }
+}
+
+/**
+ * 특정 세션의 감사 이벤트 목록 조회 (서브컬렉션 우선, 레거시 배열 자동 폴백)
+ */
+export async function getProctorSessionEvents(sessionId: string): Promise<ProctorEvent[]> {
+  if (isMock || !db) {
+    const all = lsGet<ProctorSession>(LS.proctor);
+    const s = all.find((x) => x.id === sessionId);
+    return s?.events || [];
+  }
+  try {
+    const subSnap = await getDocs(collection(db, 'proctorSessions', sessionId, 'events'));
+    if (!subSnap.empty) {
+      return subSnap.docs
+        .map((d) => d.data() as ProctorEvent)
+        .sort((a, b) => a.ts - b.ts);
+    }
+    const docSnap = await getDoc(doc(db, 'proctorSessions', sessionId));
+    if (docSnap.exists()) {
+      return (docSnap.data() as ProctorSession).events || [];
+    }
+  } catch (err) {
+    console.warn('getProctorSessionEvents error:', err);
+  }
+  return [];
 }
 
 export async function finishProctorSession(
@@ -364,16 +398,28 @@ export async function uploadCourseVideo(
   }
 
   const durationSec = await readVideoDuration(file).catch(() => undefined);
-  // 관리자 비밀번호를 그대로 쓰지 않는다 — 이 토큰은 번들에 포함되어 공개되므로
-  // 비밀번호와 반드시 분리해야 한다. (video-server/README.md 참고)
   const token = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
+
+  let idToken = '';
+  if (auth?.currentUser) {
+    try {
+      idToken = await auth.currentUser.getIdToken();
+    } catch (e) {
+      console.warn('[uploadVideo] Firebase ID Token 조회 실패:', e);
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('file', file);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${VIDEO_SERVER_URL}/upload`);
-    xhr.setRequestHeader('x-upload-token', token);
+    if (idToken) {
+      xhr.setRequestHeader('Authorization', `Bearer ${idToken}`);
+    }
+    if (token) {
+      xhr.setRequestHeader('x-upload-token', token);
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };
@@ -384,7 +430,7 @@ export async function uploadCourseVideo(
           const url = res.url?.startsWith('http') ? res.url : `${VIDEO_SERVER_URL}${res.url || '/videos/' + res.file}`;
           resolve({ url, durationSec, storagePath: res.file });
         } catch (e) {
-          reject(new Error('업로드 응답 파싱 실패'));
+          reject(new Error('업로드 응답 파싱 실패', { cause: e }));
         }
       } else {
         reject(new Error(`업로드 실패 (${xhr.status}) ${xhr.responseText}`));

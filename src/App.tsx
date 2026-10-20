@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, AlertCircle, CheckCircle2, Loader2, Calendar, ArrowRight, Home, LogOut, Shield, Moon, Sun, Clock, ChevronDown, ChevronUp, Check, WifiOff } from 'lucide-react';
-import { quizzes, type Quiz } from './data';
+import { quizzes, type Quiz, sanitizeQuizForStudent } from './data';
 import { type Student } from './team';
 import { observeSession, signOutUser, type SessionUser } from './session';
-import { hasAuth } from './firebase';
-import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, type Progress } from './api';
+import { hasAuth, isMock } from './firebase';
+import { saveScore, getStudentProgress, getQuizzes, getStudents, getAnnouncements, submitForServerGrading, syncAllQuizKeysToServer, type Progress } from './api';
 import Login from './Login';
 import Admin from './Admin';
 import CourseHome from './lms/CourseHome';
@@ -26,7 +26,7 @@ const genId = () =>
  * 객관식 답안은 보기 "인덱스"로 저장되므로, 그대로 보여주면
  * 학생에게 "내 답변: 0, 2" 같은 의미 없는 숫자가 보인다.
  */
-export function formatAnswer(
+function formatAnswer(
   q: { type: string; options?: string[] } | undefined,
   ans: string | string[] | undefined,
 ): string {
@@ -41,9 +41,18 @@ export function formatAnswer(
     .join(', ');
 }
 
+interface PyodideInterface {
+  runPython: (code: string) => unknown;
+  runPythonAsync?: (code: string) => Promise<unknown>;
+  globals: {
+    get: (name: string) => unknown;
+    set: (name: string, value: unknown) => void;
+  };
+}
+
 declare global {
   interface Window {
-    loadPyodide: (config?: any) => Promise<any>;
+    loadPyodide: (config?: { indexURL?: string }) => Promise<PyodideInterface>;
   }
 }
 
@@ -117,11 +126,12 @@ export default function App() {
   const [proctorMode, setProctorMode] = useState<'log' | 'strict'>('log');
   const [dynamicTeam, setDynamicTeam] = useState<Student[]>([]);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
+  const fullQuizRef = useRef<Quiz | null>(null);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState<Record<string, any>>({});
-  const [pyodide, setPyodide] = useState<any>(null);
+  const [results, setResults] = useState<Record<string, unknown>>({});
+  const [pyodide, setPyodide] = useState<PyodideInterface | null>(null);
   const [isGrading, setIsGrading] = useState(false);
   const [gradingProgress, setGradingProgress] = useState<{done: number, total: number} | null>(null);
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
@@ -133,8 +143,8 @@ export default function App() {
     if (saved) return saved === 'dark';
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   });
+  const [currentTime] = useState(() => Date.now());
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
-  const [shouldAutoSubmit, setShouldAutoSubmit] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showOnlyWrong, setShowOnlyWrong] = useState(false);
@@ -150,6 +160,10 @@ export default function App() {
     }
   }, [isDarkMode]);
 
+  // gradeQuiz 는 아래(early return 뒤)에서 선언되므로 직접 참조하면 TDZ 위험이 있다.
+  // ref 로 최신 구현을 넘겨받아 호출한다.
+  const gradeQuizRef = useRef<null | (() => Promise<void>)>(null);
+
   useEffect(() => {
     let timerId: ReturnType<typeof setInterval>;
     if (currentView === 'quiz' && timeLeft !== null && timeLeft > 0 && !showResults && !isGrading) {
@@ -157,7 +171,8 @@ export default function App() {
         setTimeLeft(prev => {
           if (prev && prev <= 1) {
             clearInterval(timerId);
-            setShouldAutoSubmit(true);
+            alert("제한 시간이 초과되었습니다. 자동으로 답안을 제출합니다.");
+            gradeQuizRef.current?.();
             return 0;
           }
           return prev ? prev - 1 : 0;
@@ -167,18 +182,6 @@ export default function App() {
     return () => clearInterval(timerId);
   }, [currentView, timeLeft, showResults, isGrading]);
 
-  // gradeQuiz 는 아래(early return 뒤)에서 선언되므로 직접 참조하면 TDZ 위험이 있다.
-  // ref 로 최신 구현을 넘겨받아 호출한다.
-  const gradeQuizRef = useRef<null | (() => Promise<void>)>(null);
-
-  useEffect(() => {
-    if (shouldAutoSubmit) {
-      setShouldAutoSubmit(false);
-      alert("제한 시간이 초과되었습니다. 자동으로 답안을 제출합니다.");
-      gradeQuizRef.current?.();
-    }
-  }, [shouldAutoSubmit]);
-
   const loadTeam = async () => {
     const students = await getStudents();
     setDynamicTeam(students);
@@ -186,6 +189,9 @@ export default function App() {
 
   const loadQuizzes = async () => {
     const qs = await getQuizzes();
+    if (isAdminUser && qs.length > 0) {
+      syncAllQuizKeysToServer(qs).catch(() => {});
+    }
     setDynamicQuizzes(() => {
       const merged = [...qs];
       quizzes.forEach(sq => {
@@ -202,32 +208,57 @@ export default function App() {
 
   const [announcements, setAnnouncements] = useState<{id: string, text: string, date: number}[]>([]);
 
-  const loadAnnouncements = async () => {
-    const data = await getAnnouncements();
-    setAnnouncements(data);
-  };
-
-  const loadCourses = useCallback(async () => {
-    setCourses(await getCourses());
-  }, []);
-
   const loadLessonProgress = useCallback(async () => {
     if (loggedInUser && !isAdminUser) {
       setLessonProgress(await getLessonProgress(loggedInUser));
     } else {
       setLessonProgress([]);
     }
-  }, [loggedInUser]);
+  }, [loggedInUser, isAdminUser]);
 
   useEffect(() => {
-    loadQuizzes();
-    loadAnnouncements();
-    loadCourses();
-  }, [loadCourses]);
+    let ignore = false;
+    getQuizzes().then((qs) => {
+      if (ignore) return;
+      setDynamicQuizzes(() => {
+        const merged = [...qs];
+        quizzes.forEach((sq) => {
+          if (!merged.find((mq) => mq.id === sq.id)) merged.push(sq);
+        });
+        return merged.sort((a, b) => {
+          const pubA = a.isPublished !== false;
+          const pubB = b.isPublished !== false;
+          if (pubA !== pubB) return pubA ? -1 : 1;
+          return b.date.localeCompare(a.date);
+        });
+      });
+    });
+    getAnnouncements().then((data) => {
+      if (!ignore) setAnnouncements(data);
+    });
+    getCourses().then((c) => {
+      if (!ignore) setCourses(c);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
-    loadLessonProgress();
-  }, [loadLessonProgress]);
+    let ignore = false;
+    if (loggedInUser && !isAdminUser) {
+      getLessonProgress(loggedInUser).then((p) => {
+        if (!ignore) setLessonProgress(p);
+      });
+    } else {
+      Promise.resolve().then(() => {
+        if (!ignore) setLessonProgress([]);
+      });
+    }
+    return () => {
+      ignore = true;
+    };
+  }, [loggedInUser, isAdminUser]);
 
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
@@ -273,15 +304,28 @@ export default function App() {
     }
   };
 
-  // Pyodide(수십 MB)는 주관식 채점 fallback 에만 쓰이므로 필요할 때 한 번만 받는다.
-  const pyodidePromise = useRef<Promise<any> | null>(null);
-  const ensurePyodide = useCallback(async (): Promise<any | null> => {
+  // Pyodide(수십 MB)는 주관식 채점 fallback 에만 쓰이므로 필요할 때 동적으로 주입하여 로드한다.
+  const pyodidePromise = useRef<Promise<PyodideInterface> | null>(null);
+  const ensurePyodide = useCallback(async (): Promise<PyodideInterface | null> => {
     if (pyodide) return pyodide;
     if (!pyodidePromise.current) {
       pyodidePromise.current = (async () => {
-        // index.html 의 로더 스크립트가 아직 준비되지 않았을 수 있어 잠시 기다린다
-        for (let i = 0; i < 20 && !window.loadPyodide; i++) {
-          await new Promise((r) => setTimeout(r, 250));
+        // Pyodide CDN 스크립트가 아직 없으면 동적으로 비동기 주입
+        if (typeof window !== 'undefined' && !window.loadPyodide) {
+          await new Promise<void>((resolve, reject) => {
+            const existing = document.querySelector('script[src*="pyodide"]');
+            if (existing) {
+              existing.addEventListener('load', () => resolve());
+              existing.addEventListener('error', () => reject(new Error('Pyodide script failed to load')));
+              return;
+            }
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js';
+            script.async = true;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Pyodide CDN 스크립트 로드 실패'));
+            document.head.appendChild(script);
+          });
         }
         if (!window.loadPyodide) throw new Error('Pyodide loader unavailable');
         return window.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/' });
@@ -310,13 +354,19 @@ export default function App() {
       const p = await getStudentProgress(loggedInUser);
       setStudentProgress(p);
     }
-  }, [loggedInUser]);
+  }, [loggedInUser, isAdminUser]);
 
   useEffect(() => {
-    if (loggedInUser && currentView === 'home') {
-      fetchProgress();
+    let ignore = false;
+    if (loggedInUser && currentView === 'home' && !isAdminUser) {
+      getStudentProgress(loggedInUser).then((p) => {
+        if (!ignore) setStudentProgress(p);
+      });
     }
-  }, [loggedInUser, currentView, fetchProgress]);
+    return () => {
+      ignore = true;
+    };
+  }, [loggedInUser, currentView, isAdminUser]);
 
   // 네트워크 끊김 감지 — 오프라인 상태에서는 저장/채점이 실패하므로 미리 알린다
   useEffect(() => {
@@ -337,6 +387,22 @@ export default function App() {
     }
   }, [answers, selectedQuiz, loggedInUser]);
 
+  // 퀴즈 응시 중 의도치 않은 탭 닫기/새로고침 방지 (데이터 손실 방어)
+  useEffect(() => {
+    if (currentView !== 'quiz' || showResults) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (Object.keys(answers).length > 0) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [currentView, showResults, answers]);
+
+  useEffect(() => {
+    gradeQuizRef.current = gradeQuiz;
+  });
+
   if (!authReady) {
     return (
       <div className="app-container" style={{background: 'transparent', boxShadow: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh'}}>
@@ -348,7 +414,7 @@ export default function App() {
   if (!loggedInUser) return <Login onLogin={() => setSessionNonce(n => n + 1)} />;
 
   const startQuiz = async (quiz: Quiz, ctx?: QuizLessonContext) => {
-    if (quiz.questions.length === 0) return;
+    if (quiz.questions.length === 0 || isGrading) return;
 
     setCourseCtx(ctx ?? null);
     setQuizOrigin(ctx ? 'course' : 'home');
@@ -389,7 +455,9 @@ export default function App() {
       quizToStart = { ...quiz, questions: shuffled };
     }
     
-    setSelectedQuiz(quizToStart);
+    // 학생 화면에서는 시험 정답, 해설, 파이썬 검증 코드가 보이지 않도록 마스킹
+    fullQuizRef.current = quizToStart;
+    setSelectedQuiz(isAdminUser ? quizToStart : sanitizeQuizForStudent(quizToStart));
     setCurrentQuestionIdx(0);
     
     const savedKey = `aim_quiz_answers_${quizToStart.id}_${loggedInUser}`;
@@ -397,7 +465,7 @@ export default function App() {
     if (saved) {
       try {
         setAnswers(JSON.parse(saved));
-      } catch (e) {
+      } catch {
         setAnswers({});
       }
     } else {
@@ -422,6 +490,7 @@ export default function App() {
     }
     setProctorSessionId(null);
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    fullQuizRef.current = null;
     setSelectedQuiz(null);
     if (quizOrigin === 'course' && selectedCourse) {
       loadLessonProgress();
@@ -437,6 +506,7 @@ export default function App() {
     setSession(null);
     setStudentProgress([]);
     setLessonProgress([]);
+    fullQuizRef.current = null;
     setSelectedQuiz(null);
     setSelectedCourse(null);
     setCurrentView('home');
@@ -449,111 +519,151 @@ export default function App() {
     setResults({});
     setShowResults(false);
     setExpandedAnswers({});
-    if (selectedQuiz && loggedInUser) {
-      localStorage.removeItem(`aim_quiz_answers_${selectedQuiz.id}_${loggedInUser}`);
+    const quizToReset = fullQuizRef.current || selectedQuiz;
+    if (quizToReset && loggedInUser) {
+      localStorage.removeItem(`aim_quiz_answers_${quizToReset.id}_${loggedInUser}`);
+    }
+    if (quizToReset) {
+      fullQuizRef.current = quizToReset;
+      setSelectedQuiz(isAdminUser ? quizToReset : sanitizeQuizForStudent(quizToReset));
     }
     // 재응시: 새 모니터링 세션 시작 (직전 응시와 동일한 수준)
     const rawMode: 'off' | 'log' | 'strict' = courseCtx
       ? (courseCtx.proctored ? 'strict' : 'off')
-      : (selectedQuiz?.proctoring || 'log');
+      : (quizToReset?.proctoring || 'log');
     const mode: 'off' | 'log' | 'strict' = isAdminUser ? 'off' : rawMode;
     setProctorMode(mode === 'strict' ? 'strict' : 'log');
-    if (mode !== 'off' && selectedQuiz && loggedInUser) {
+    if (mode !== 'off' && quizToReset && loggedInUser) {
       try {
         const sid = await createProctorSession({
           id: genId(),
           studentId: loggedInUser,
           studentName: session?.name,
-          quizId: selectedQuiz.id,
-          quizTitle: selectedQuiz.title,
+          quizId: quizToReset.id,
+          quizTitle: quizToReset.title,
           courseId: courseCtx?.courseId,
           lessonId: courseCtx?.lessonId,
         });
         setProctorSessionId(sid);
       } catch { setProctorSessionId(null); }
     }
-    if (selectedQuiz?.timeLimit) setTimeLeft(selectedQuiz.timeLimit * 60);
+    if (quizToReset?.timeLimit) setTimeLeft(quizToReset.timeLimit * 60);
   };
 
-  const gradeQuiz = async () => {
+  async function gradeQuiz() {
     if (isGrading) return; // 자동 제출과 수동 제출이 겹쳐 두 번 채점되는 것 방지
     setIsGrading(true);
     const gradingResults: Record<string, boolean> = {};
-    const fullResults: Record<string, any> = {};
-    let correctCount = 0;
-    const questions = selectedQuiz!.questions;
+    const fullResults: Record<string, unknown> = {};
+    const fullQuiz = fullQuizRef.current || selectedQuiz;
+    const questions = fullQuiz!.questions;
     setGradingProgress({ done: 0, total: questions.length });
 
-    // 객관식은 즉시 로컬 채점하고, AI 호출이 필요한 부분만 병렬로 처리한다.
-    // (직렬 호출 시 문항 수 × 최대 15초까지 걸려 제출이 사실상 멈춘 것처럼 보였다)
-    let done = 0;
-    const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
+    let correctCount = 0;
+    let serverGraded = false;
+    let serverGradedResult: { score: number; total: number; submissionToken?: string; attemptId?: string } | null = null;
+    const attemptId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    const gradeOne = async (q: typeof questions[number]) => {
-      const userAns = answers[q.id];
-      const isBlank = q.type === 'short'
-        ? !(typeof userAns === 'string' && userAns.trim())
-        : !(Array.isArray(userAns) && userAns.length > 0);
-      if (isBlank) { gradingResults[q.id] = false; bump(); return; }
-
-      if (q.type === 'short') {
-        const u = typeof userAns === 'string' ? userAns : '';
-        let graded = false;
-        try {
-          const geminiResult = await gradeWithGemini(q, u);
-          gradingResults[q.id] = geminiResult.isCorrect;
-          fullResults[`reason_${q.id}`] = geminiResult.reason;
-          if (geminiResult.correctAnswer) fullResults[`ai_ans_${q.id}`] = geminiResult.correctAnswer;
-          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
-          graded = true;
-        } catch (e) {
-          console.warn("Gemini grading failed, falling back to Pyodide:", e);
+    // 1. 서버 사이드 권위 있는 채점 시도 (클라이언트 정답 유출 방지 및 멱등성 보장)
+    try {
+      const serverResult = await submitForServerGrading(fullQuiz!.id, answers, {
+        studentId: loggedInUser || undefined,
+        attemptId,
+      });
+      if (serverResult && serverResult.ok) {
+        Object.assign(gradingResults, serverResult.results);
+        if (serverResult.detailedResults) {
+          Object.assign(fullResults, serverResult.detailedResults);
         }
-
-        if (!graded) {
-          const py = pyodide || (await ensurePyodide());
-          if (py) {
-            try {
-              py.runPython(`locals().clear()`);
-              if (q.setupCode) py.runPython(q.setupCode);
-              let userRes = null;
-              try { userRes = py.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
-              py.globals.set('_user_result', userRes);
-              const isCorrect = py.runPython(q.validationCode || 'False');
-              gradingResults[q.id] = isCorrect === true;
-            } catch (err) {
-              gradingResults[q.id] = false;
-            }
-          } else {
-            // 채점 수단이 모두 실패 — 오답 처리 대신 사유를 남긴다
-            gradingResults[q.id] = false;
-            fullResults[`reason_${q.id}`] = '자동 채점에 실패했습니다. 관리자에게 문의해주세요.';
-          }
-        }
-      } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
-        const u = Array.isArray(userAns) ? userAns : [userAns as string];
-        const correct = q.correctAnswers || [];
-        gradingResults[q.id] =
-          u.length === correct.length &&
-          [...u].sort().join(',') === [...correct].sort().join(',');
-
-        try {
-          const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-          const correctTexts = correct.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
-          const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
-          fullResults[`reason_${q.id}`] = geminiResult.reason;
-          if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
-        } catch (e) {
-          console.warn("Gemini explanation failed for multiple-choice:", e);
-        }
-      } else {
-        gradingResults[q.id] = false;
+        correctCount = serverResult.score;
+        serverGraded = true;
+        serverGradedResult = serverResult;
+        setGradingProgress({ done: questions.length, total: questions.length });
       }
-      bump();
-    };
+    } catch (e) {
+      console.warn("Server grading failed:", e);
+    }
 
-    await Promise.all(questions.map(gradeOne));
-    correctCount = questions.reduce((n, q) => (gradingResults[q.id] ? n + 1 : n), 0);
+    if (!serverGraded) {
+      // 운영 환경(PROD & !isMock)에서는 비인가 클라이언트 자체 채점 및 직접 성적 저장을 엄격히 차단
+      if (import.meta.env.PROD && !isMock) {
+        setIsGrading(false);
+        alert(
+          '공식 채점 서버와 통신할 수 없습니다.\n작성하신 답안은 안전하게 보존되었으니 네트워크 상태를 확인하시거나 관리자에게 문의 후 다시 시도해주세요.'
+        );
+        return;
+      }
+
+      // 2. 개발(DEV) 또는 Mock 모드 시 로컬 채점 폴백 허용 (개발 편의 및 로컬 테스트 지원)
+      let done = 0;
+      const bump = () => { done++; setGradingProgress({ done, total: questions.length }); };
+
+      const gradeOne = async (q: typeof questions[number]) => {
+        const userAns = answers[q.id];
+        const isBlank = q.type === 'short'
+          ? !(typeof userAns === 'string' && userAns.trim())
+          : !(Array.isArray(userAns) && userAns.length > 0);
+        if (isBlank) { gradingResults[q.id] = false; bump(); return; }
+
+        if (q.type === 'short') {
+          const u = typeof userAns === 'string' ? userAns : '';
+          let graded = false;
+          try {
+            const geminiResult = await gradeWithGemini(q, u);
+            gradingResults[q.id] = geminiResult.isCorrect;
+            fullResults[`reason_${q.id}`] = geminiResult.reason;
+            if (geminiResult.correctAnswer) fullResults[`ai_ans_${q.id}`] = geminiResult.correctAnswer;
+            if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
+            graded = true;
+          } catch (e) {
+            console.warn("Gemini grading failed, falling back to Pyodide:", e);
+          }
+
+          if (!graded) {
+            const py = pyodide || (await ensurePyodide());
+            if (py) {
+              try {
+                py.runPython(`locals().clear()`);
+                if (q.setupCode) py.runPython(q.setupCode);
+                let userRes = null;
+                try { userRes = py.runPython(u); } catch (err) { console.log(`Execution error in Q${q.id}:`, err); }
+                py.globals.set('_user_result', userRes);
+                const isCorrect = py.runPython(q.validationCode || 'False');
+                gradingResults[q.id] = isCorrect === true;
+              } catch {
+                gradingResults[q.id] = false;
+              }
+            } else {
+              // 채점 수단이 모두 실패 — 오답 처리 대신 사유를 남긴다
+              gradingResults[q.id] = false;
+              fullResults[`reason_${q.id}`] = '자동 채점에 실패했습니다. 관리자에게 문의해주세요.';
+            }
+          }
+        } else if (q.type === 'multiple' || q.type === 'multiple-multi') {
+          const u = Array.isArray(userAns) ? userAns : [userAns as string];
+          const correct = q.correctAnswers || [];
+          gradingResults[q.id] =
+            u.length === correct.length &&
+            [...u].sort().join(',') === [...correct].sort().join(',');
+
+          try {
+            const userSelectedTexts = u.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+            const correctTexts = correct.map(idx => q.options?.[parseInt(idx)] || '').join(', ');
+            const geminiResult = await gradeWithGemini(q, `학생이 선택한 보기: ${userSelectedTexts} (실제 정답 보기: ${correctTexts})`);
+            fullResults[`reason_${q.id}`] = geminiResult.reason;
+            if (geminiResult.explanation) fullResults[`ai_exp_${q.id}`] = geminiResult.explanation;
+          } catch (e) {
+            console.warn("Gemini explanation failed for multiple-choice:", e);
+          }
+        } else {
+          gradingResults[q.id] = false;
+        }
+        bump();
+      };
+
+      await Promise.all(questions.map(gradeOne));
+      correctCount = questions.reduce((n, q) => (gradingResults[q.id] ? n + 1 : n), 0);
+    }
 
     Object.assign(fullResults, gradingResults);
     questions.forEach(q => {
@@ -564,11 +674,27 @@ export default function App() {
 
     try {
       if (!isAdminUser) {
-        await saveScore(loggedInUser!, selectedQuiz!.id, correctCount, questions.length, fullResults);
+        await saveScore(
+          loggedInUser!,
+          fullQuiz!.id,
+          correctCount,
+          questions.length,
+          fullResults,
+          {
+            deadline: fullQuiz?.deadline,
+            maxAttempts: fullQuiz?.maxAttempts,
+            authoritativeScore: serverGradedResult ? serverGradedResult.score : undefined,
+            authoritativeTotal: serverGradedResult ? serverGradedResult.total : undefined,
+            attemptId: serverGradedResult?.attemptId || attemptId,
+            submissionToken: serverGradedResult?.submissionToken,
+          }
+        );
         await fetchProgress();
       }
-      localStorage.removeItem(`aim_quiz_answers_${selectedQuiz!.id}_${loggedInUser}`);
-    } catch (e) { alert("결과 저장 실패"); }
+      localStorage.removeItem(`aim_quiz_answers_${fullQuiz!.id}_${loggedInUser}`);
+    } catch (e: unknown) {
+      alert(`결과 저장 실패: ${e instanceof Error ? e.message : '알 수 없는 오류가 발생했습니다.'}`);
+    }
 
     // 코스 퀴즈 레슨이면 이수 여부 기록
     if (courseCtx && loggedInUser && !isAdminUser) {
@@ -595,9 +721,10 @@ export default function App() {
 
     setIsGrading(false);
     setGradingProgress(null);
+    // 채점 완료 후 결과 화면에서는 학생이 해설과 정답을 확인할 수 있도록 원본 퀴즈로 복원
+    if (fullQuiz) setSelectedQuiz(fullQuiz);
     setShowResults(true);
-  };
-  gradeQuizRef.current = gradeQuiz;
+  }
 
   // Helper variables for Home view
   const visibleQuizzes = dynamicQuizzes.filter(q => {
@@ -749,7 +876,14 @@ export default function App() {
                     <motion.div initial={{height: 0, opacity: 0}} animate={{height: 'auto', opacity: 1}} exit={{height: 0, opacity: 0}} style={{overflow: 'hidden'}}>
                       <div style={{marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16}}>
                         {(() => {
-                          const wrongItems: any[] = [];
+                          interface WrongItem {
+                            quizTitle: string;
+                            questionTitle: string;
+                            userAns: string;
+                            correctAns: string;
+                            aiFeedback: React.ReactNode;
+                          }
+                          const wrongItems: WrongItem[] = [];
                           studentProgress.forEach(p => {
                             if (!p.detailedResults) return;
                             const q = dynamicQuizzes.find(quiz => quiz.id === p.quizId);
@@ -760,9 +894,9 @@ export default function App() {
                                 wrongItems.push({
                                   quizTitle: q.title,
                                   questionTitle: question.title,
-                                  userAns: formatAnswer(question, p.detailedResults![`ans_${question.id}`]),
+                                  userAns: formatAnswer(question, p.detailedResults![`ans_${question.id}`] as string | string[] | undefined),
                                   correctAns: question.type !== 'short' ? formatAnswer(question, question.correctAnswers) : '',
-                                  aiFeedback: p.detailedResults![`reason_${question.id}`]
+                                  aiFeedback: p.detailedResults![`reason_${question.id}`] as React.ReactNode
                                 });
                               }
                             });
@@ -826,8 +960,8 @@ export default function App() {
               const isExhausted = q.maxAttempts ? attempts >= q.maxAttempts : false;
               const isCompleted = !!p;
               
-              const isPastDeadline = q.deadline ? new Date(`${q.deadline}T23:59:59`).getTime() < Date.now() : false;
-              const isNearDeadline = q.deadline && !isPastDeadline && !isCompleted ? new Date(`${q.deadline}T23:59:59`).getTime() - Date.now() < 24 * 60 * 60 * 1000 : false;
+              const isPastDeadline = q.deadline ? new Date(`${q.deadline}T23:59:59`).getTime() < currentTime : false;
+              const isNearDeadline = q.deadline && !isPastDeadline && !isCompleted ? new Date(`${q.deadline}T23:59:59`).getTime() - currentTime < 24 * 60 * 60 * 1000 : false;
               
               const isLocked = q.questions.length === 0 || (q.isPublished === false && !isAdminUser) || (isExhausted && !isAdminUser) || (isPastDeadline && !isAdminUser);
               return (
@@ -897,17 +1031,17 @@ export default function App() {
                         <div style={{marginBottom: 8}}><strong style={{color: 'var(--correct)'}}>정답:</strong> {formatAnswer(q, q.correctAnswers)}</div>
                       )}
                       
-                      {results[`reason_${q.id}`] && (
+                      {Boolean(results[`reason_${q.id}`]) && (
                         <div style={{marginBottom: 8, color: results[q.id] ? 'var(--primary)' : 'var(--incorrect)', fontWeight: 600, display: 'flex', gap: 6, alignItems: 'flex-start'}}>
                           <span>🤖</span>
                           <div>
                             <span style={{fontWeight: 700}}>{results[q.id] ? 'AI 피드백: ' : 'AI 오답 분석: '}</span>
-                            {results[`reason_${q.id}`]}
+                            {String(results[`reason_${q.id}`])}
                           </div>
                         </div>
                       )}
                       
-                      {(results[`ai_ans_${q.id}`] || results[`ai_exp_${q.id}`] || q.explanation) && (
+                      {(Boolean(results[`ai_ans_${q.id}`]) || Boolean(results[`ai_exp_${q.id}`]) || q.explanation) && (
                         <div style={{marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 8}}>
                           <button
                             onClick={() => setExpandedAnswers(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
@@ -930,18 +1064,18 @@ export default function App() {
                           
                           {expandedAnswers[q.id] && (
                             <div style={{marginTop: 8, fontSize: 13, color: 'var(--text-secondary)'}}>
-                              {results[`ai_ans_${q.id}`] && (
+                              {Boolean(results[`ai_ans_${q.id}`]) && (
                                 <div style={{marginBottom: 8}}>
                                   <div style={{fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 2}}>모범 답안:</div>
                                   <pre style={{margin: 0, padding: 8, background: 'var(--surface)', borderRadius: 8, fontSize: 12, fontFamily: 'monospace', overflowX: 'auto', border: '1px solid var(--border)'}}>
-                                    {results[`ai_ans_${q.id}`]}
+                                    {String(results[`ai_ans_${q.id}`])}
                                   </pre>
                                 </div>
                               )}
-                              {(results[`ai_exp_${q.id}`] || q.explanation) && (
+                              {(Boolean(results[`ai_exp_${q.id}`]) || q.explanation) && (
                                 <div>
                                   <div style={{fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)', marginBottom: 2}}>상세 해설:</div>
-                                  <div style={{lineHeight: 1.5}}>{results[`ai_exp_${q.id}`] || q.explanation}</div>
+                                  <div style={{lineHeight: 1.5}}>{String(results[`ai_exp_${q.id}`] || q.explanation)}</div>
                                 </div>
                               )}
                             </div>

@@ -78,7 +78,7 @@ async function studentIdFromUser(user: User): Promise<string | null> {
   if (!db) return null;
   try {
     const snap = await getDocs(query(collection(db, 'students'), where('uid', '==', user.uid)));
-    return snap.empty ? null : (snap.docs[0].data() as any).id ?? snap.docs[0].id;
+    return snap.empty ? null : (snap.docs[0].data() as { id?: string }).id ?? snap.docs[0].id;
   } catch (e) {
     console.warn('학번 조회 실패:', e);
     return null;
@@ -93,7 +93,7 @@ async function studentIdFromUser(user: User): Promise<string | null> {
  * Mock 모드에서는 localStorage 기반의 예전 세션을 그대로 흉내낸다.
  */
 export function observeSession(cb: (user: SessionUser | null) => void): () => void {
-  if (!hasAuth) {
+  if (!hasAuth || !auth) {
     const legacyId = localStorage.getItem('aim_team_user');
     if (legacyId) {
       verifyStudent(legacyId).then((s) =>
@@ -119,7 +119,7 @@ export function observeSession(cb: (user: SessionUser | null) => void): () => vo
     const studentId = await studentIdFromUser(user);
     if (!studentId) {
       // 명부에 없는 계정 — 로그인 상태를 유지할 이유가 없다
-      await fbSignOut(auth).catch(() => {});
+      if (auth) await fbSignOut(auth).catch(() => {});
       cb(null);
       return;
     }
@@ -144,8 +144,8 @@ export type AuthResult =
   | { ok: true }
   | { ok: false; code: 'not_on_roster' | 'needs_signup' | 'wrong_password' | 'weak_password' | 'already_registered' | 'too_many' | 'unknown'; message: string };
 
-function mapFirebaseError(e: any): AuthResult {
-  const code = e?.code || '';
+function mapFirebaseError(e: unknown): AuthResult {
+  const code = (e as { code?: string })?.code || '';
   if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
     return { ok: false, code: 'wrong_password', message: '비밀번호가 올바르지 않습니다.' };
   }
@@ -175,7 +175,7 @@ export async function lookupStudent(
 }
 
 export async function signIn(studentId: string, password: string): Promise<AuthResult> {
-  if (!hasAuth) {
+  if (!hasAuth || !auth) {
     // Mock 모드: 예전처럼 명부 확인만
     const s = await verifyStudent(studentId);
     if (!s) return { ok: false, code: 'not_on_roster', message: '등록되지 않은 학번입니다.' };
@@ -199,7 +199,7 @@ export async function signIn(studentId: string, password: string): Promise<AuthR
 
 /** 최초 1회 비밀번호 설정 (명부에 있는 학번만 가능) */
 export async function signUp(studentId: string, password: string): Promise<AuthResult> {
-  if (!hasAuth) return signIn(studentId, password);
+  if (!hasAuth || !auth || !db) return signIn(studentId, password);
 
   const info = await lookupStudent(studentId);
   if (!info.onRoster) {
@@ -231,12 +231,12 @@ export async function signUp(studentId: string, password: string): Promise<AuthR
 
 export async function signOutUser(): Promise<void> {
   localStorage.removeItem('aim_team_user');
-  if (hasAuth) await fbSignOut(auth).catch(() => {});
+  if (hasAuth && auth) await fbSignOut(auth).catch(() => {});
 }
 
 /** 비밀번호 변경 (현재 비밀번호 확인 후) */
 export async function changePassword(currentPw: string, newPw: string): Promise<AuthResult> {
-  if (!hasAuth || !auth.currentUser) {
+  if (!hasAuth || !auth || !auth.currentUser) {
     return { ok: false, code: 'unknown', message: '로그인 상태가 아닙니다.' };
   }
   if (newPw.length < 6) {
@@ -254,7 +254,7 @@ export async function changePassword(currentPw: string, newPw: string): Promise<
 
 /** 비밀번호 재설정 메일 (실제 이메일이 연결된 계정만 가능) */
 export async function sendReset(studentId: string): Promise<AuthResult> {
-  if (!hasAuth) return { ok: false, code: 'unknown', message: '이 환경에서는 지원되지 않습니다.' };
+  if (!hasAuth || !auth) return { ok: false, code: 'unknown', message: '이 환경에서는 지원되지 않습니다.' };
   const info = await lookupStudent(studentId);
   if (!info.onRoster) {
     return { ok: false, code: 'not_on_roster', message: '등록되지 않은 학번입니다.' };

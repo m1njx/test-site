@@ -53,11 +53,22 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
   }, [selectedQuizId]);
 
   useEffect(() => {
-    if (activeTab === 'results') {
-      fetchResults();
-      setShowQuizAiPreview(false);
-    }
-  }, [selectedQuizId, activeTab, fetchResults]);
+    if (activeTab !== 'results' || !selectedQuizId) return;
+    let ignore = false;
+    getQuizResults(selectedQuizId)
+      .then((res) => {
+        if (!ignore) {
+          setResults(res);
+          setShowQuizAiPreview(false);
+        }
+      })
+      .catch((e) => {
+        console.error(e);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [selectedQuizId, activeTab]);
 
   useEffect(() => {
     if (activeTab === 'stats') {
@@ -133,7 +144,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     const quizToEdit = dynamicQuizzes.find(q => q.id === selectedQuizId);
     if (quizToEdit) {
       const copy = JSON.parse(JSON.stringify(quizToEdit));
-      copy.id = `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`;
+      copy.id = `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 7)}`;
       copy.title = `${copy.title} (복제본)`;
       if (copy.isPublished === undefined) copy.isPublished = true;
       setActiveQuiz(copy);
@@ -150,7 +161,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       alert("삭제되었습니다.");
       onRefresh();
       setSelectedQuizId(dynamicQuizzes[0]?.id || '');
-    } catch (e) {
+    } catch {
       alert("삭제 실패");
     }
   };
@@ -189,7 +200,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       await saveStudent(newStudent);
       setNewStudent({ id: '', name: '', email: '' });
       onRefreshTeam();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert('팀원 저장 실패: ' + (e instanceof Error ? e.message : String(e)));
+    }
     setLoading(false);
   };
 
@@ -199,7 +213,10 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
     try {
       await deleteStudent(id);
       onRefreshTeam();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      alert('팀원 삭제 실패: ' + (e instanceof Error ? e.message : String(e)));
+    }
     setLoading(false);
   };
 
@@ -214,7 +231,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 
   const addQuestion = (type: QuestionType) => {
     const q: Question = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).slice(2, 11),
       type,
       title: '',
       description: '',
@@ -260,7 +277,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
       alert("저장 성공!");
       onRefresh();
       setActiveTab('results');
-    } catch (e: any) { alert(`저장 실패: ${e.message}`); }
+    } catch (e: unknown) { alert(`저장 실패: ${e instanceof Error ? e.message : String(e)}`); }
     setLoading(false);
   };
 
@@ -301,9 +318,9 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                     {quiz.questions.map((q, qIdx) => {
                       const isCorrect = result.detailedResults?.[q.id];
                       const studentAns = result.detailedResults ? result.detailedResults[`ans_${q.id}`] : undefined;
-                      const aiReason = result.detailedResults ? result.detailedResults[`reason_${q.id}`] : undefined;
-                      const aiAns = result.detailedResults ? result.detailedResults[`ai_ans_${q.id}`] : undefined;
-                      const aiExp = result.detailedResults ? result.detailedResults[`ai_exp_${q.id}`] : undefined;
+                      const aiReason = result.detailedResults ? String(result.detailedResults[`reason_${q.id}`] || '') : undefined;
+                      const aiAns = result.detailedResults ? String(result.detailedResults[`ai_ans_${q.id}`] || '') : undefined;
+                      const aiExp = result.detailedResults ? String(result.detailedResults[`ai_exp_${q.id}`] || '') : undefined;
 
                       return (
                         <div key={q.id} style={{padding: 12, background: 'var(--surface)', borderRadius: 12, border: `1px solid ${isCorrect ? 'var(--correct-soft)' : 'var(--incorrect)'}`}}>
@@ -315,14 +332,14 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                           {q.type === 'short' ? (
                             <div style={{marginTop: 8, fontSize: 13}}>
                               <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
-                              <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 12, overflowX: 'auto', fontFamily: 'monospace'}}>{studentAns || '(답변 없음)'}</pre>
+                              <pre style={{margin: 0, padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 12, overflowX: 'auto', fontFamily: 'monospace'}}>{String(studentAns || '(답변 없음)')}</pre>
                             </div>
                           ) : (
                             <div style={{marginTop: 8, fontSize: 13}}>
                               <div style={{color: 'var(--text-secondary)', fontSize: 11, marginBottom: 2}}>학생 답변:</div>
                               <div style={{padding: 8, background: 'var(--bg-color)', borderRadius: 6, fontSize: 13, fontWeight: 500}}>
                                 {Array.isArray(studentAns) 
-                                  ? studentAns.map(idx => q.options?.[parseInt(idx)]).join(', ') 
+                                  ? (studentAns as unknown[]).map(idx => q.options?.[parseInt(String(idx))]).join(', ') 
                                   : (typeof studentAns === 'string' ? q.options?.[parseInt(studentAns)] : '(답변 없음)')}
                               </div>
                             </div>
@@ -457,7 +474,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                 try {
                                   const res = await fetchAiPreview(q.title, q.description || '');
                                   setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { ...res, loading: false } }));
-                                } catch (err) {
+                                } catch {
                                   setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 로딩 실패' } }));
                                 }
                               }}
@@ -529,12 +546,12 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
 질문: ${q.title}
 선택지: ${q.options?.join(', ')}
 정답: ${correctTexts}`;
-                                    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+                                    const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
                                     if (!apiKey) throw new Error('API key not configured');
                                     
                                     const text = await callGeminiWithFallback(apiKey, prompt);
                                     setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: correctTexts, explanation: text, loading: false } }));
-                                  } catch (err) {
+                                  } catch {
                                     setAiPreviews(prev => ({ ...prev, [`quiz_${q.id}`]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 해설 로딩 실패' } }));
                                   }
                                 }}
@@ -753,11 +770,13 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                       <div style={{marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8}}>
                                         {Object.entries(s.detailedResults).filter(([k, v]) => !k.startsWith('reason_') && !k.startsWith('ans_') && v === false).map(([k]) => {
                                           const question = q?.questions.find(qu => qu.id === k);
+                                          const ansVal = s.detailedResults![`ans_${k}`];
+                                          const reasonVal = s.detailedResults![`reason_${k}`];
                                           return (
                                             <div key={k} style={{padding: 8, background: 'var(--incorrect-soft)', borderRadius: 6, border: '1px solid var(--incorrect-soft)'}}>
                                               <div style={{fontSize: 12, fontWeight: 700, marginBottom: 4}}>{question?.title || k}</div>
-                                              <div style={{fontSize: 12, color: 'var(--text-secondary)'}}>제출답안: {Array.isArray(s.detailedResults![`ans_${k}`]) ? s.detailedResults![`ans_${k}`].join(', ') : s.detailedResults![`ans_${k}`] || '(없음)'}</div>
-                                              {s.detailedResults![`reason_${k}`] && <div style={{fontSize: 11, color: 'var(--incorrect)', marginTop: 4}}>{s.detailedResults![`reason_${k}`]}</div>}
+                                              <div style={{fontSize: 12, color: 'var(--text-secondary)'}}>제출답안: {Array.isArray(ansVal) ? (ansVal as unknown[]).map(String).join(', ') : String(ansVal || '(없음)')}</div>
+                                              {Boolean(reasonVal) && <div style={{fontSize: 11, color: 'var(--incorrect)', marginTop: 4}}>{String(reasonVal)}</div>}
                                             </div>
                                           );
                                         })}
@@ -787,7 +806,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                 <div style={{display: 'flex', gap: 8}}>
                   <button onClick={() => {
                     setActiveQuiz({
-                      id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).substr(2, 5)}`,
+                      id: `q-${new Date().toISOString().split('T')[0]}-${Math.random().toString(36).slice(2, 7)}`,
                       date: new Date().toISOString().split('T')[0],
                       title: '',
                       description: '',
@@ -997,7 +1016,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                                 onClick={() => {
                                   const newOpts = q.options!.filter((_, oi) => oi !== oIdx);
                                   // Adjust correctAnswers indices after deletion
-                                  let newCorrects = (q.correctAnswers || [])
+                                  const newCorrects = (q.correctAnswers || [])
                                     .map(c => parseInt(c))
                                     .filter(c => c !== oIdx)
                                     .map(c => c > oIdx ? (c - 1).toString() : c.toString());
@@ -1034,7 +1053,7 @@ export default function Admin({ onBack, dynamicQuizzes, onRefresh, dynamicTeam, 
                           try {
                             const res = await fetchAiPreview(q.title, q.description || '');
                             setAiPreviews(prev => ({ ...prev, [q.id]: { ...res, loading: false } }));
-                          } catch (err) {
+                          } catch {
                             setAiPreviews(prev => ({ ...prev, [q.id]: { correctAnswer: '', explanation: '', loading: false, error: 'AI 모범 답안 로딩 실패' } }));
                           }
                         }}

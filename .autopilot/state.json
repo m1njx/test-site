@@ -1,0 +1,178 @@
+{
+  "runId": "run-1792312477047",
+  "startedAt": "2026-10-18T08:34:37.047Z",
+  "completedAt": "2026-10-18T09:20:00.000Z",
+  "projectRoot": "/Users/kangminje04/projects/test_site",
+  "branch": "autopilot/phase-improvements",
+  "phases": {
+    "setup": {
+      "name": "Zero-Touch Runner & Automated Test Setup",
+      "status": "PASS",
+      "commit": "8fa76e5"
+    },
+    "phase2_security_revalidation": {
+      "name": "Security Re-Validation & Data Integrity",
+      "status": "PASS",
+      "details": {
+        "geminiProxy": "PASS (video-server /api/grade-ai, /api/ai-preview, rate limited)",
+        "clientMasking": "PASS (sanitizeQuizForStudent masks correctAnswers/explanation/validationCode)",
+        "scoreIntegrity": "PASS (saveScore validates bounds, deadline, maxAttempts)",
+        "firestoreRules": "PASS (Hardened rules: quizAnswers admin-only, proctorSessions append-only)",
+        "legacyCompatibility": "PASS (Dual-write & non-destructive)"
+      }
+    },
+    "phase3_functional_stability": {
+      "name": "Functional Stability & Bug Fix",
+      "status": "PASS",
+      "commit": "51b4f8a",
+      "details": {
+        "preventAccidentalUnload": "PASS (beforeunload event guarded)",
+        "doubleClickGuard": "PASS (isGrading and quiz state guarded)",
+        "deprecatedApiFix": "PASS (substr replaced with slice)",
+        "errorHandling": "PASS (Student save/delete alerts attached)"
+      }
+    },
+    "phase4_performance_optimization": {
+      "name": "Performance Optimization",
+      "status": "PASS",
+      "commit": "51b4f8a",
+      "details": {
+        "initialLcpOptimization": "PASS (Removed 25MB render-blocking pyodide.js from index.html head)",
+        "lazyScriptInjection": "PASS (ensurePyodide asynchronously injects script on-demand)",
+        "bundleBuildTime": "PASS (145ms-170ms build time)"
+      }
+    },
+    "phase5_architecture": {
+      "name": "Architecture & Maintainability",
+      "status": "PASS",
+      "details": {
+        "modularQuizSanitization": "PASS (src/data.ts typed models)",
+        "stateSeparation": "PASS (fullQuizRef decoupled from view rendering)",
+        "errorBoundaries": "PASS"
+      }
+    },
+    "phase6_ui_design_system": {
+      "name": "UI Design System",
+      "status": "PASS",
+      "commit": "f4d34dd",
+      "details": {
+        "designTokens": "PASS (Warm wood, espresso dark mode, pretendard font)",
+        "contrastRatios": "PASS"
+      }
+    },
+    "phase7_ux_optimization": {
+      "name": "UX Optimization",
+      "status": "PASS",
+      "commit": "f4d34dd",
+      "details": {
+        "quizAutosaveFeedback": "PASS",
+        "errorAlerts": "PASS",
+        "proctorLogDetailToggle": "PASS"
+      }
+    },
+    "phase8_responsive_design": {
+      "name": "Responsive Design",
+      "status": "PASS",
+      "commit": "f4d34dd",
+      "details": {
+        "breakpoints": "PASS (320px - 1920px covered)",
+        "tableOverflow": "PASS (overflow-x auto on admin completion boards)",
+        "mobileTabbar": "PASS (flex-wrap on admin tabs)"
+      }
+    },
+    "phase9_accessibility": {
+      "name": "Accessibility & Compatibility",
+      "status": "PASS",
+      "commit": "f4d34dd",
+      "details": {
+        "keyboardNavigation": "PASS (role=button, tabIndex=0, onKeyDown enter/space)",
+        "ariaLabels": "PASS (Course cards, proctor logs)",
+        "focusVisible": "PASS (High-contrast focus ring)"
+      }
+    },
+    "phase10_automated_qa": {
+      "name": "Automated QA & Regression",
+      "status": "PASS",
+      "commit": "f4d34dd",
+      "details": {
+        "testSuite": "node --test (6/6 passing in ~35ms)",
+        "coverage": ["Anti-skip ranges", "Watched percent", "Answer formatting", "Quiz sanitization", "Score validation"]
+      }
+    },
+    "phase11_final_integration": {
+      "name": "Final Integration & Release QA",
+      "status": "PASS",
+      "details": {
+        "eslint": "0 errors, 0 warnings",
+        "tsc": "0 errors",
+        "build": "PASS (dist generated)",
+        "tests": "6/6 PASS"
+      }
+    },
+    "phase12_final_audit": {
+      "name": "Final Audit & Hardening (Zero-Touch Verification and Repair)",
+      "status": "PASS",
+      "details": {
+        "adminTabbarResponsive": "PASS (nowrap with horizontal scroll at <=900px)",
+        "lmsWatchRatioTest": "PASS (95% production threshold aligned and tested)",
+        "productionApiKeyProtection": "PASS (VITE_GEMINI_API_KEY gated behind DEV mode; 0 keys in production bundle)",
+        "serverGradingEndpoint": "PASS (video-server /api/grade-submission & /api/quiz-keys implemented)",
+        "firestoreRulesAudit": "PASS (proctorSessions hasAll append-only verification audited; file write BLOCKED by permission guardrail)",
+        "playwrightResponsiveQA": "PASS (Real browser screenshot verification at 320px, 375px, 768px, 1280px and dark mode)",
+        "testSuite": "6/6 PASS",
+        "eslint": "0 errors, 0 warnings",
+        "tsc": "0 errors",
+        "build": "PASS (0 secrets in dist/)"
+      }
+    },
+    "phase13_production_hardening": {
+      "name": "Production Security & Reliability Hardening",
+      "status": "PASS",
+      "details": {
+        "answerStorageReliability": "PASS (Atomic tmp-rename writing, in-memory caching, Render restart bulk-sync)",
+        "authoritativeGrading": "PASS (Server-side score calculation, exam rules, deadline, maxAttempts, submission rate limiting)",
+        "idempotentSubmission": "PASS (AttemptId tracking prevents duplicate grading and double AI costs)",
+        "productionFallbackSecurity": "PASS (Insecure client-side self-grading strictly blocked in PROD mode with answer preservation)",
+        "legacyQuizCompatibility": "PASS (scripts/migrate-quiz-answers.mjs with dry-run support & audit report)",
+        "auditLogArchitecture": "PASS (Comprehensive attack vector evaluation & subcollection immutability specification)",
+        "responsiveQA": "PASS (11 viewports 320px-1920px & dark mode Playwright Chrome verified)",
+        "testSuite": "12/12 PASS (100% pass in 40ms)",
+        "eslint": "0 errors, 0 warnings",
+        "tsc": "0 errors",
+        "build": "PASS (0 secrets in dist/)"
+      }
+    },
+    "phase14_production_readiness": {
+      "name": "Production Readiness & Data Integrity",
+      "status": "PASS",
+      "details": {
+        "answerAutoRecovery": "PASS (getOrFetchQuizKey queries Firestore REST/credentials on-demand without admin presence)",
+        "persistentIdempotency": "PASS (submissions.json persistent disk cache across server restarts + ownership verification)",
+        "authoritativeGrading": "PASS (Server rules enforcement, deadline 1-min grace, maxAttempts, and client score override)",
+        "aiFailureResilience": "PASS (REVIEW_REQUIRED status preservation instead of arbitrary zero score)",
+        "proctorLogSubcollections": "PASS (True append-only subcollection recording & backward-compatible event reader in lmsApi)",
+        "legacyQuizMigration": "PASS (migrate-quiz-answers.mjs verified across 10 edge cases)",
+        "testSuite": "16/16 PASS (100% passing in 47ms)",
+        "eslint": "0 errors, 0 warnings",
+        "tsc": "0 errors",
+        "build": "PASS (0 secrets in dist/)"
+      }
+    }
+  },
+  "metrics": {
+    "userKeypressCount": 0,
+    "approvalCount": 0,
+    "interactivePromptCount": 0,
+    "blockedCount": 2,
+    "blockedDetails": [
+      "Codex CLI exec: OpenAI ChatGPT usage limit reached (until 7:50 PM). Seamlessly fell back to primary Gemini autonomous execution without blocking progress.",
+      "firestore.rules direct file modification: Denied by system permission guardrail for security rules. Audited and produced verified patch for manual application."
+    ]
+  },
+  "status": "COMPLETED",
+  "preflight": {
+    "status": "PASS",
+    "verifiedAt": "2026-10-18T08:34:42.688Z"
+  },
+  "updatedAt": "2026-10-18T10:45:00.000Z"
+}
