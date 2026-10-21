@@ -1,20 +1,48 @@
 rules_version = '2';
 
+// ===============================================================
 // AIM TEAM LMS — Firestore 보안 규칙 (Firebase Auth 기반)
+// ===============================================================
 //
-// 핵심 아이디어
-//  - 관리자 = `admins/{uid}` 문서가 존재하는 사용자. 이 컬렉션은 앱에서 쓸 수 없고
-//    Firebase 콘솔에서만 만들 수 있으므로, 개발자도구로 권한을 얻을 수 없다.
-//  - 학생 본인 = `students/{학번}.uid == request.auth.uid`.
-//    성적/진도/응시기록은 본인 것만 쓸 수 있다.
-//  - 성적과 부정행위 로그는 아무도 삭제할 수 없다(관리자 포함, 콘솔 제외).
+// 1. admins/{uid}
+//    Firebase Auth UID 기반 관리자 식별. 콘솔에서만 문서 생성/삭제 가능.
 //
-// 배포:  firebase deploy --only firestore:rules
+// 2. students/{studentId}
+//    학번 문서. 관리자만 생성/삭제. 학생은 최초 로그인 시 본인 uid/email 바인딩만 허용.
+//
+// 3. quizzes/{quizId}
+//    시험 문제 정보. 로그인 사용자 읽기 가능, 관리자만 쓰기.
+//
+// 4. quizAnswers/{quizId}
+//    시험 정답/해설/채점코드 분리 컬렉션. 오직 관리자(isAdmin)만 읽기/쓰기 가능.
+//
+// 5. courses/{courseId} / announcements/{id}
+//    코스 및 공지사항. 학생 읽기, 관리자 쓰기.
+//
+// 6. progress/{docId}
+//    공식 성적 문서 (${studentId}_${quizId}). 본인/관리자 읽기, 서버/관리자만 생성/수정 가능 (학생 직접 작성 차단), 삭제 절대 불가.
+//
+// 7. lessonProgress/{docId}
+//    강의 진도 문서 (${studentId}_${lessonId}). 본인만 작성, 삭제 절대 불가.
+//
+// 8. proctorSessions/{sessionId}
+//    부정행위 감지 로그. Append-Only 보장(이벤트 크기 축소 차단), 삭제 절대 불가.
+//    - events/{eventId}: 개별 부정행위 이벤트 서브컬렉션. 불변(수정/삭제 불가), 본인/관리자 읽기, 본인 생성.
+//
+// 9. quizAttempts/{attemptId}
+//    시험 응시 및 채점 결과 불변 기록. 본인/관리자 읽기, 관리자만 생성/수정 가능 (학생 직접 작성 차단), 삭제 절대 불가.
+//
+// 10. tickets/{ticketId}
+//    동일 Firebase 프로젝트를 공유하는 별도 티켓 앱 호환 규칙 보존.
+// ===============================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    /* ---------------------------- 헬퍼 ---------------------------- */
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
     function signedIn() {
       return request.auth != null;
     }
@@ -24,15 +52,184 @@ service cloud.firestore {
              && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
     }
 
-    // 해당 학번의 주인인가
+    // 해당 학번의 주인인지 확인
     function ownsStudent(sid) {
       return signedIn()
+             && sid is string
+             && sid.size() > 0
              && exists(/databases/$(database)/documents/students/$(sid))
              && get(/databases/$(database)/documents/students/$(sid)).data.uid == request.auth.uid;
     }
 
+    function isValidEmail(email) {
+      return email is string
+          && email.size() >= 3
+          && email.size() <= 100
+          && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'name'])
+          && data.keys().hasOnly(['id', 'name', 'email', 'uid'])
+          && data.id is string && data.id.size() >= 1 && data.id.size() <= 50
+          && data.name is string && data.name.size() >= 1 && data.name.size() <= 50
+          && (!('email' in data) || isValidEmail(data.email))
+          && (!('uid' in data) || (data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128));
+    }
+
+    function isValidQuiz(data) {
+      return data.keys().hasAll(['id', 'date', 'title', 'description', 'questions'])
+          && data.keys().hasOnly(['id', 'date', 'title', 'description', 'questions', 'isPublished', 'visibleTo', 'timeLimit', 'shuffleQuestions', 'maxAttempts', 'deadline', 'proctoring'])
+          && data.id is string && data.id.size() >= 1 && data.id.size() <= 100
+          && data.date is string && data.date.size() >= 1 && data.date.size() <= 50
+          && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+          && data.description is string && data.description.size() <= 5000
+          && data.questions is list && data.questions.size() <= 200
+          && (!('isPublished' in data) || data.isPublished is bool)
+          && (!('visibleTo' in data) || (data.visibleTo is list && data.visibleTo.size() <= 500))
+          && (!('timeLimit' in data) || (data.timeLimit is number && data.timeLimit >= 0))
+          && (!('shuffleQuestions' in data) || data.shuffleQuestions is bool)
+          && (!('maxAttempts' in data) || (data.maxAttempts is int && data.maxAttempts >= 1))
+          && (!('deadline' in data) || (data.deadline is string && data.deadline.size() <= 100))
+          && (!('proctoring' in data) || data.proctoring in ['off', 'log', 'strict']);
+    }
+
+    function isValidQuizAnswer(data) {
+      return data.keys().hasAll(['quizId', 'updatedAt', 'questions'])
+          && data.keys().hasOnly(['quizId', 'updatedAt', 'questions'])
+          && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
+          && (data.updatedAt is int || data.updatedAt is timestamp)
+          && data.questions is list && data.questions.size() <= 200;
+    }
+
+    function isValidCourse(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'order', 'isPublished', 'requireSequential', 'modules', 'createdAt', 'updatedAt'])
+          && data.keys().hasOnly(['id', 'title', 'description', 'thumbnailUrl', 'order', 'isPublished', 'visibleTo', 'requireSequential', 'modules', 'createdAt', 'updatedAt'])
+          && data.id is string && data.id.size() >= 1 && data.id.size() <= 100
+          && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+          && data.description is string && data.description.size() <= 5000
+          && (!('thumbnailUrl' in data) || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 1000))
+          && data.order is number
+          && data.isPublished is bool
+          && (!('visibleTo' in data) || (data.visibleTo is list && data.visibleTo.size() <= 500))
+          && data.requireSequential is bool
+          && data.modules is list && data.modules.size() <= 100
+          && (data.createdAt is int || data.createdAt is timestamp)
+          && (data.updatedAt is int || data.updatedAt is timestamp);
+    }
+
+    function isValidAnnouncement(data) {
+      return data.keys().hasAll(['text', 'date'])
+          && data.keys().hasOnly(['id', 'text', 'date'])
+          && data.text is string && data.text.size() >= 1 && data.text.size() <= 5000
+          && (data.date is int || data.date is timestamp)
+          && (!('id' in data) || (data.id is string && data.id.size() <= 100));
+    }
+
+    function isValidProgress(docId, data) {
+      return data.keys().hasAll(['studentId', 'quizId', 'score', 'total', 'timestamp'])
+          && data.keys().hasOnly(['studentId', 'quizId', 'score', 'total', 'timestamp', 'detailedResults', 'bestScore', 'attempts', 'attemptId', 'submissionToken'])
+          && docId == data.studentId + '_' + data.quizId
+          && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
+          && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
+          && data.score is int && data.score >= 0
+          && data.total is int && data.total >= 0
+          && data.score <= data.total
+          && (data.timestamp is int || data.timestamp is timestamp)
+          && (!('bestScore' in data) || (data.bestScore is int && data.bestScore >= 0))
+          && (!('attempts' in data) || (data.attempts is int && data.attempts >= 1))
+          && (!('detailedResults' in data) || (data.detailedResults is map && data.detailedResults.size() <= 200))
+          && (!('attemptId' in data) || (data.attemptId is string && data.attemptId.size() <= 100))
+          && (!('submissionToken' in data) || (data.submissionToken is string && data.submissionToken.size() <= 128));
+    }
+
+    function isValidLessonProgress(docId, data) {
+      return data.keys().hasAll(['studentId', 'courseId', 'lessonId', 'kind', 'status', 'updatedAt'])
+          && data.keys().hasOnly(['studentId', 'courseId', 'lessonId', 'kind', 'status', 'watchedRanges', 'watchedSec', 'durationSec', 'lastPositionSec', 'maxReachedSec', 'bestScore', 'total', 'lastAttemptId', 'updatedAt', 'completedAt'])
+          && docId == data.studentId + '_' + data.lessonId
+          && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
+          && data.courseId is string && data.courseId.size() >= 1 && data.courseId.size() <= 100
+          && data.lessonId is string && data.lessonId.size() >= 1 && data.lessonId.size() <= 100
+          && data.kind in ['video', 'quiz']
+          && data.status in ['in_progress', 'completed']
+          && (data.updatedAt is int || data.updatedAt is timestamp)
+          && (!('watchedRanges' in data) || (data.watchedRanges is list && data.watchedRanges.size() <= 1000))
+          && (!('watchedSec' in data) || (data.watchedSec is number && data.watchedSec >= 0))
+          && (!('durationSec' in data) || (data.durationSec is number && data.durationSec >= 0))
+          && (!('lastPositionSec' in data) || (data.lastPositionSec is number && data.lastPositionSec >= 0))
+          && (!('maxReachedSec' in data) || (data.maxReachedSec is number && data.maxReachedSec >= 0))
+          && (!('bestScore' in data) || (data.bestScore is number && data.bestScore >= 0))
+          && (!('total' in data) || (data.total is number && data.total >= 0))
+          && (!('lastAttemptId' in data) || (data.lastAttemptId is string && data.lastAttemptId.size() <= 100))
+          && (!('completedAt' in data) || (data.completedAt is int || data.completedAt is timestamp));
+    }
+
+    function isValidProctorSession(sessionId, data) {
+      return data.keys().hasAll(['id', 'studentId', 'quizId', 'startedAt', 'events', 'flagScore', 'flagged', 'submitted'])
+          && data.keys().hasOnly(['id', 'studentId', 'studentName', 'courseId', 'lessonId', 'quizId', 'quizTitle', 'startedAt', 'endedAt', 'events', 'flagScore', 'flagged', 'submitted', 'score', 'total'])
+          && data.id == sessionId
+          && data.id is string && data.id.size() >= 1 && data.id.size() <= 100
+          && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
+          && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
+          && (data.startedAt is int || data.startedAt is timestamp)
+          && data.events is list && data.events.size() <= 500
+          && data.flagScore is number && data.flagScore >= 0
+          && data.flagged is bool
+          && data.submitted is bool
+          && (!('studentName' in data) || (data.studentName is string && data.studentName.size() <= 50))
+          && (!('courseId' in data) || (data.courseId is string && data.courseId.size() <= 100))
+          && (!('lessonId' in data) || (data.lessonId is string && data.lessonId.size() <= 100))
+          && (!('quizTitle' in data) || (data.quizTitle is string && data.quizTitle.size() <= 200))
+          && (!('endedAt' in data) || (data.endedAt is int || data.endedAt is timestamp))
+          && (!('score' in data) || (data.score is int && data.score >= 0))
+          && (!('total' in data) || (data.total is int && data.total >= 0));
+    }
+
+    function isValidProctorEvent(data) {
+      return data.keys().hasAll(['type', 'ts'])
+          && data.keys().hasOnly(['type', 'ts', 'detail', 'sessionId', 'id'])
+          && data.type is string && data.type.size() >= 1 && data.type.size() <= 100
+          && (data.ts is int || data.ts is timestamp)
+          && (!('detail' in data) || (data.detail is string && data.detail.size() <= 1000))
+          && (!('sessionId' in data) || (data.sessionId is string && data.sessionId.size() <= 100))
+          && (!('id' in data) || (data.id is string && data.id.size() <= 100));
+    }
+
+    function isValidQuizAttempt(attemptId, data) {
+      return data.keys().hasAll(['attemptId', 'studentId', 'quizId', 'status', 'score', 'total', 'gradedAt'])
+          && data.keys().hasOnly(['attemptId', 'studentId', 'quizId', 'status', 'score', 'total', 'gradedAt', 'percentage', 'results', 'detailedResults', 'answers', 'ok', 'courseId', 'lessonId', 'proctorSessionId', 'submittedAt', 'timestamp', 'attempts'])
+          && data.attemptId == attemptId
+          && data.attemptId is string && data.attemptId.size() >= 1 && data.attemptId.size() <= 100
+          && data.studentId is string && data.studentId.size() >= 1 && data.studentId.size() <= 50
+          && data.quizId is string && data.quizId.size() >= 1 && data.quizId.size() <= 100
+          && data.status is string && data.status.size() >= 1 && data.status.size() <= 50
+          && (data.score is int || data.score is number) && data.score >= 0
+          && (data.total is int || data.total is number) && data.total >= 0
+          && data.score <= data.total
+          && (data.gradedAt is int || data.gradedAt is timestamp)
+          && (!('percentage' in data) || (data.percentage is number && data.percentage >= 0 && data.percentage <= 100))
+          && (!('ok' in data) || data.ok is bool)
+          && (!('results' in data) || (data.results is map && data.results.size() <= 200))
+          && (!('detailedResults' in data) || (data.detailedResults is map && data.detailedResults.size() <= 200))
+          && (!('answers' in data) || (data.answers is map && data.answers.size() <= 200))
+          && (!('courseId' in data) || (data.courseId is string && data.courseId.size() <= 100))
+          && (!('lessonId' in data) || (data.lessonId is string && data.lessonId.size() <= 100))
+          && (!('proctorSessionId' in data) || (data.proctorSessionId is string && data.proctorSessionId.size() <= 100))
+          && (!('submittedAt' in data) || (data.submittedAt is int || data.submittedAt is timestamp))
+          && (!('timestamp' in data) || (data.timestamp is int || data.timestamp is timestamp))
+          && (!('attempts' in data) || (data.attempts is int && data.attempts >= 1));
+    }
+
+    // ===============================================================
+    // Rules by Collection
+    // ===============================================================
+
     /* --------------------------- 관리자 --------------------------- */
-    // 읽기만 허용(본인 권한 확인용). 부여/회수는 Firebase 콘솔에서만.
+    // 읽기만 허용(본인 권한 확인용). 부여/회수는 Firebase 콘솔에서만 가능.
     match /admins/{uid} {
       allow get: if signedIn();
       allow list, write: if false;
@@ -40,22 +237,24 @@ service cloud.firestore {
 
     /* --------------------------- 팀원 명부 -------------------------- */
     match /students/{studentId} {
-      // 로그인 화면에서 학번 존재 여부를 확인해야 하므로 읽기는 공개
-      allow read: if true;
+      // 1. 단일 조회(get)는 관리자이거나, 등록된 본인 문서인 경우만 허용
+      //    (익명 조회 거부, 타 학생 문서 조회 거부, 학번 추측을 통한 PII 조회 원천 차단)
+      allow get: if isAdmin()
+                 || (signedIn() && 'uid' in resource.data && resource.data.uid == request.auth.uid);
 
-      // 명부에 새로 추가하는 건 관리자만 (콘솔에서 만드는 건 규칙과 무관하게 항상 가능)
-      allow create: if isAdmin();
+      // 2. 전체 명부 열람(list)은 오직 관리자만 허용
+      //    (일반 학생 및 익명 사용자의 명부 일괄 스크래핑 전면 차단)
+      allow list: if isAdmin();
 
-      allow update: if
-        isAdmin()
-        // 최초 가입 시 본인 uid 를 자기 문서에 기록하는 것만 허용.
-        // 이미 uid 가 있으면 덮어쓸 수 없어 계정 탈취를 막는다.
-        || (signedIn()
-            && request.resource.data.uid == request.auth.uid
-            && (!('uid' in resource.data) || resource.data.uid == request.auth.uid)
-            // 이름/학번을 마음대로 바꾸지 못하게
-            && request.resource.data.id == resource.data.id
-            && request.resource.data.name == resource.data.name);
+      // 3. 등록, 수정, 삭제는 오직 관리자만 허용
+      //    (미등록 학번 계정 선점, 타인 UID 바인딩, 이메일/이름 변조 원천 차단)
+      allow create: if isAdmin()
+                    && request.resource.data.id == studentId
+                    && isValidStudent(request.resource.data);
+
+      allow update: if isAdmin()
+                    && isValidStudent(request.resource.data)
+                    && request.resource.data.id == resource.data.id;
 
       allow delete: if isAdmin();
     }
@@ -64,53 +263,89 @@ service cloud.firestore {
     // 학생은 읽기만, 편집은 관리자만
     match /quizzes/{quizId} {
       allow read: if signedIn();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidQuiz(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    /* --------------------- 퀴즈 정답/해설 분리 보관 ------------------- */
+    // 정답, 해설, 채점 코드는 관리자만 읽기/쓰기 가능 (학생 일체 접근 불가)
+    match /quizAnswers/{quizId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && isValidQuizAnswer(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /courses/{courseId} {
       allow read: if signedIn();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidCourse(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /announcements/{id} {
       allow read: if signedIn();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidAnnouncement(request.resource.data);
+      allow delete: if isAdmin();
     }
 
-    /* ----------------------------- 성적 ----------------------------- */
+    /* ----------------------------- 공식 성적 ----------------------------- */
+    // 공식 성적은 신뢰할 수 있는 서버(관리자 권한)만 생성 및 갱신 가능.
+    // 학생의 직접 생성 및 변조는 일체 차단되며, 본인 성적 읽기만 허용.
     match /progress/{docId} {
       allow read: if isAdmin() || ownsStudent(resource.data.studentId);
-      allow create, update: if isAdmin()
-                            || (ownsStudent(request.resource.data.studentId) && validProgress());
-      allow delete: if false; // 성적은 누구도 지울 수 없다
-    }
-
-    function validProgress() {
-      let d = request.resource.data;
-      return d.keys().hasAll(['studentId', 'quizId', 'score', 'total'])
-             && d.score is int && d.total is int
-             && d.score >= 0 && d.total >= 0 && d.score <= d.total;
+      allow create: if isAdmin() && isValidProgress(docId, request.resource.data);
+      allow update: if isAdmin() && isValidProgress(docId, request.resource.data);
+      allow delete: if false; // 성적은 누구도 삭제 불가
     }
 
     /* --------------------------- 레슨 진도 --------------------------- */
     match /lessonProgress/{docId} {
       allow read: if isAdmin() || ownsStudent(resource.data.studentId);
-      allow create, update: if isAdmin()
-                            || (ownsStudent(request.resource.data.studentId)
-                                && request.resource.data.status in ['in_progress', 'completed']);
-      allow delete: if false;
+      allow create: if (isAdmin() || ownsStudent(request.resource.data.studentId))
+                    && isValidLessonProgress(docId, request.resource.data);
+      allow update: if isValidLessonProgress(docId, request.resource.data)
+                    && (isAdmin()
+                        || (ownsStudent(resource.data.studentId)
+                            && request.resource.data.studentId == resource.data.studentId
+                            && request.resource.data.lessonId == resource.data.lessonId
+                            && request.resource.data.courseId == resource.data.courseId
+                            && request.resource.data.kind == resource.data.kind));
+      allow delete: if false; // 레슨 진도 삭제 불가
     }
 
     /* -------------------------- 부정행위 로그 ------------------------- */
     match /proctorSessions/{sessionId} {
       // 학생은 자기 기록만, 관리자는 전체 열람
       allow read: if isAdmin() || ownsStudent(resource.data.studentId);
-      allow create: if ownsStudent(request.resource.data.studentId);
-      // 이벤트 추가/제출 결과 기록만 허용. 학번은 바꿀 수 없다.
+      allow create: if ownsStudent(request.resource.data.studentId)
+                    && isValidProctorSession(sessionId, request.resource.data);
+      // 이벤트 추가 및 제출 결과 기록 허용 (학번, 세션ID, 퀴즈ID, 시작시간 불변)
+      // 중요: 기존 증거 인멸을 방지하기 위해 events 배열은 오직 append-only (크기 축소 불가) 강제
       allow update: if ownsStudent(resource.data.studentId)
+                    && isValidProctorSession(sessionId, request.resource.data)
                     && request.resource.data.studentId == resource.data.studentId
-                    && request.resource.data.events.size() <= 500;
+                    && request.resource.data.id == resource.data.id
+                    && request.resource.data.quizId == resource.data.quizId
+                    && request.resource.data.startedAt == resource.data.startedAt
+                    && request.resource.data.events.size() >= resource.data.events.size();
       allow delete: if false; // 증거 보전
+
+      /* --- 부정행위 개별 이벤트 서브컬렉션 (True Append-Only Audit Log) --- */
+      match /events/{eventId} {
+        allow read: if isAdmin()
+                    || ownsStudent(get(/databases/$(database)/documents/proctorSessions/$(sessionId)).data.studentId);
+        allow create: if ownsStudent(get(/databases/$(database)/documents/proctorSessions/$(sessionId)).data.studentId)
+                      && isValidProctorEvent(request.resource.data);
+        allow update: if false; // strictly immutable
+        allow delete: if false; // evidence deletion strictly forbidden
+      }
+    }
+
+    /* -------------------------- 시험 응시 기록 ------------------------- */
+    match /quizAttempts/{attemptId} {
+      allow read: if isAdmin() || ownsStudent(resource.data.studentId);
+      allow create: if isAdmin() && isValidQuizAttempt(attemptId, request.resource.data);
+      allow update: if isAdmin() && isValidQuizAttempt(attemptId, request.resource.data);
+      allow delete: if false; // 시험 응시 기록 삭제 절대 불가
     }
 
     /* --------------------------- 다른 앱 ---------------------------- */

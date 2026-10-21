@@ -1,4 +1,29 @@
 import type { Question } from './data';
+import { auth } from './firebase';
+
+// 서버 URL (설정 시 브라우저에서 직접 Gemini 호출하지 않고 백엔드 프록시 경유)
+const SERVER_URL = (import.meta.env.VITE_VIDEO_SERVER_URL || '').replace(/\/$/, '');
+const UPLOAD_TOKEN = import.meta.env.VITE_VIDEO_UPLOAD_TOKEN || '';
+
+async function getAdminHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (UPLOAD_TOKEN) {
+    headers['x-upload-token'] = UPLOAD_TOKEN;
+  }
+  if (auth?.currentUser) {
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+      }
+    } catch (e) {
+      console.warn('[Gemini] Firebase ID Token 조회 실패:', e);
+    }
+  }
+  return headers;
+}
 
 // .env에서 모델 목록 읽기 (쉼표로 구분)
 const GEMINI_MODELS_ENV = import.meta.env.VITE_GEMINI_MODELS || 'gemini-2.5-flash,gemini-3.1-flash-lite,gemini-3.5-flash';
@@ -8,6 +33,29 @@ const GEMINI_MODELS = GEMINI_MODELS_ENV.split(',').map((m: string) => m.trim()).
 let lastSuccessfulModel: string | null = null;
 
 export async function callGeminiWithFallback(apiKey: string, prompt: string): Promise<string> {
+  // 1. 서버 프록시가 구성되어 있으면 서버를 통해 안전하게 호출
+  if (SERVER_URL) {
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${SERVER_URL}/api/ai-explain`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ prompt }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text) return data.text;
+      }
+    } catch (e) {
+      console.warn('Backend Gemini proxy failed, checking direct fallback:', e);
+    }
+  }
+
+  // 2. 개발/Mock 모드 전용: 클라이언트 직접 호출 (API 키가 있는 경우만)
+  if (!apiKey) {
+    throw new Error('Gemini API가 구성되지 않았습니다 (서버 미설정 및 API 키 부재)');
+  }
+
   let lastError = null;
   const timeout = 15000; // 15초 타임아웃
   
@@ -18,8 +66,6 @@ export async function callGeminiWithFallback(apiKey: string, prompt: string): Pr
   
   for (const model of modelsToTry) {
     try {
-      console.log(`Trying Gemini model: ${model}`);
-      
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
       
@@ -50,9 +96,7 @@ export async function callGeminiWithFallback(apiKey: string, prompt: string): Pr
         throw new Error('Empty response');
       }
       
-      // 성공한 모델 기억
       lastSuccessfulModel = model;
-      console.log(`Success with model: ${model}`);
       return text;
     } catch (e) {
       console.warn(`Model ${model} failed:`, e);
@@ -63,9 +107,35 @@ export async function callGeminiWithFallback(apiKey: string, prompt: string): Pr
 }
 
 export async function gradeWithGemini(q: Question, userAns: string): Promise<{ isCorrect: boolean; reason: string; correctAnswer?: string; explanation?: string }> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  // 1. 보안 권장: 서버 프록시를 통해 브라우저 API 키 없이 채점
+  if (SERVER_URL) {
+    try {
+      const res = await fetch(`${SERVER_URL}/api/grade-ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: { title: q.title, description: q.description },
+          userAns,
+        }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        return {
+          isCorrect: Boolean(result.isCorrect),
+          reason: result.reason || '',
+          correctAnswer: result.correctAnswer || '',
+          explanation: result.explanation || '',
+        };
+      }
+    } catch (e) {
+      console.warn('Backend grade-ai proxy error, falling back:', e);
+    }
+  }
+
+  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드 전용)
+  const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
   if (!apiKey) {
-    throw new Error('Gemini API key is not configured');
+    throw new Error('Gemini API key is not configured and server proxy is unavailable');
   }
   
   const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 학생이 제출한 코드 또는 답변을 엄격하지 않고 너그럽게 채점해줘.
@@ -97,12 +167,12 @@ ${userAns}
   const text = await callGeminiWithFallback(apiKey, prompt);
 
   let cleanText = text.trim();
-  if (cleanText.includes('\`\`\`')) {
-    const match = cleanText.match(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/);
+  if (cleanText.includes('```')) {
+    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match) {
       cleanText = match[1].trim();
     } else {
-      cleanText = cleanText.replace(/\`\`\`(?:json)?/g, '').replace(/\`\`\`/g, '').trim();
+      cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
     }
   }
 
@@ -111,7 +181,7 @@ ${userAns}
     result = JSON.parse(cleanText);
   } catch (parseErr) {
     console.error('Gemini JSON parse failed:', cleanText);
-    throw new Error('AI 응답 파싱 실패');
+    throw new Error('AI 응답 파싱 실패', { cause: parseErr });
   }
   
   return {
@@ -123,9 +193,31 @@ ${userAns}
 }
 
 export async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ correctAnswer: string; explanation: string }> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || '';
+  // 1. 보안 권장: 서버 프록시 경유
+  if (SERVER_URL) {
+    try {
+      const headers = await getAdminHeaders();
+      const res = await fetch(`${SERVER_URL}/api/ai-preview`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: qTitle, description: qDesc }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        return {
+          correctAnswer: result.correctAnswer || '',
+          explanation: result.explanation || '',
+        };
+      }
+    } catch (e) {
+      console.warn('Backend ai-preview proxy error, falling back:', e);
+    }
+  }
+
+  // 2. 클라이언트 직접 호출 (로컬 개발 / Mock 모드 전용)
+  const apiKey = import.meta.env.DEV ? (import.meta.env.VITE_GEMINI_API_KEY || '') : '';
   if (!apiKey) {
-    throw new Error('Gemini API key is not configured');
+    throw new Error('Gemini API key is not configured and server proxy is unavailable');
   }
 
   const prompt = `너는 프로그래밍 및 IT 개념 채점 조교 AI야. 
@@ -149,10 +241,10 @@ export async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ c
   const text = await callGeminiWithFallback(apiKey, prompt);
 
   let cleanText = text.trim();
-  if (cleanText.includes('\`\`\`')) {
-    const match = cleanText.match(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/);
+  if (cleanText.includes('```')) {
+    const match = cleanText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match) cleanText = match[1].trim();
-    else cleanText = cleanText.replace(/\`\`\`(?:json)?/g, '').replace(/\`\`\`/g, '').trim();
+    else cleanText = cleanText.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
   }
 
   let result;
@@ -160,7 +252,7 @@ export async function fetchAiPreview(qTitle: string, qDesc: string): Promise<{ c
     result = JSON.parse(cleanText);
   } catch (parseErr) {
     console.error('Gemini JSON parse failed:', cleanText);
-    throw new Error('AI 응답 파싱 실패');
+    throw new Error('AI 응답 파싱 실패', { cause: parseErr });
   }
   
   return {

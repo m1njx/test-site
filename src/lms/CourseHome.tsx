@@ -74,6 +74,7 @@ export default function CourseHome({ courses, lessonProgress, studentId, isAdmin
               key={course.id}
               onClick={() => onSelect(course)}
               className="lms-card"
+              aria-label={`${course.title} 코스 학습하기 (진도율 ${pct}%)`}
               style={{
                 display: 'flex',
                 alignItems: 'center',

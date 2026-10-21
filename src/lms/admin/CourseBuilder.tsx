@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Plus,
   Trash2,
@@ -48,16 +48,27 @@ interface Props {
 export default function CourseBuilder({ quizzes, team }: Props) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [editing, setEditing] = useState<Course | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [uploadPct, setUploadPct] = useState<Record<string, number>>({});
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setCourses(await getCourses());
+    const data = await getCourses();
+    setCourses(data);
     setLoading(false);
-  };
+  }, []);
+
   useEffect(() => {
-    load();
+    let ignore = false;
+    getCourses().then((data) => {
+      if (!ignore) {
+        setCourses(data);
+        setLoading(false);
+      }
+    });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const patch = (u: Partial<Course>) => setEditing((c) => (c ? { ...c, ...u } : c));
@@ -73,12 +84,12 @@ export default function CourseBuilder({ quizzes, team }: Props) {
 
   const removeModule = (mid: string) => setModules((m) => m.filter((x) => x.id !== mid));
 
-  const moveItem = <T,>(arr: T[], idx: number, dir: -1 | 1): T[] => {
+  const moveItem = <T extends { order: number }>(arr: T[], idx: number, dir: -1 | 1): T[] => {
     const j = idx + dir;
     if (j < 0 || j >= arr.length) return arr;
     const copy = [...arr];
     [copy[idx], copy[j]] = [copy[j], copy[idx]];
-    return copy.map((x: any, i) => ({ ...x, order: i }));
+    return copy.map((x, i) => ({ ...x, order: i }));
   };
 
   const addLesson = (mid: string, kind: 'video' | 'quiz') => {
@@ -127,8 +138,9 @@ export default function CourseBuilder({ quizzes, team }: Props) {
         delete n[lid];
         return n;
       });
-    } catch (e: any) {
-      alert(`업로드 실패: ${e.message || e}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`업로드 실패: ${msg}`);
       setUploadPct((p) => {
         const n = { ...p };
         delete n[lid];
@@ -156,8 +168,9 @@ export default function CourseBuilder({ quizzes, team }: Props) {
       await saveCourse(editing);
       await load();
       setEditing(null);
-    } catch (e: any) {
-      alert(`저장 실패: ${e.message || e}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`저장 실패: ${msg}`);
     }
     setLoading(false);
   };

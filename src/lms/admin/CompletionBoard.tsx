@@ -1,4 +1,4 @@
-import { useEffect, useState, Fragment } from 'react';
+import { useEffect, useState, useCallback, Fragment } from 'react';
 import { RefreshCw, Download, CheckCircle2, Circle } from 'lucide-react';
 import type { Course, LessonProgress } from '../types';
 import { flattenLessons } from '../types';
@@ -12,18 +12,29 @@ interface Props {
 export default function CompletionBoard({ team }: Props) {
   const [courses, setCourses] = useState<Course[]>([]);
   const [progress, setProgress] = useState<LessonProgress[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     const [c, p] = await Promise.all([getCourses(), getAllLessonProgress()]);
     setCourses(c.sort((a, b) => a.order - b.order));
     setProgress(p);
     setLoading(false);
-  };
+  }, []);
+
   useEffect(() => {
-    load();
+    let ignore = false;
+    Promise.all([getCourses(), getAllLessonProgress()]).then(([c, p]) => {
+      if (!ignore) {
+        setCourses(c.sort((a, b) => a.order - b.order));
+        setProgress(p);
+        setLoading(false);
+      }
+    });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const doneSet = new Set(progress.filter((p) => p.status === 'completed').map((p) => `${p.studentId}__${p.lessonId}`));
@@ -43,7 +54,7 @@ export default function CompletionBoard({ team }: Props) {
       });
       return [s.name, s.id, ...cells];
     });
-    const csv = '﻿' + [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = '\uFEFF' + [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, ShieldAlert, ChevronDown, ChevronUp, Flag } from 'lucide-react';
 import type { ProctorSession } from '../types';
 import { PROCTOR_EVENT_LABELS, PROCTOR_FLAG_THRESHOLD, PROCTOR_WEIGHTS } from '../types';
@@ -18,18 +18,29 @@ function fmtDur(ms: number) {
 
 export default function ProctorLogBoard({ team }: Props) {
   const [sessions, setSessions] = useState<ProctorSession[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [quizFilter, setQuizFilter] = useState('');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    setSessions(await getProctorSessions());
+    const data = await getProctorSessions();
+    setSessions(data);
     setLoading(false);
-  };
+  }, []);
+
   useEffect(() => {
-    load();
+    let ignore = false;
+    getProctorSessions().then((data) => {
+      if (!ignore) {
+        setSessions(data);
+        setLoading(false);
+      }
+    });
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   const quizOptions = useMemo(
@@ -99,8 +110,17 @@ export default function ProctorLogBoard({ team }: Props) {
                 }}
               >
                 <div
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={Boolean(isOpen)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', outline: 'none' }}
                   onClick={() => setOpen((o) => ({ ...o, [s.id]: !o[s.id] }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setOpen((o) => ({ ...o, [s.id]: !o[s.id] }));
+                    }
+                  }}
                 >
                   {s.flagged && <Flag size={16} color="var(--incorrect)" />}
                   <div style={{ flex: 1 }}>

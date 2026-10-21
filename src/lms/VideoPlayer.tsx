@@ -7,19 +7,42 @@ const MAX_RATE = 1; // 배속 상한 (꼼수 방지)
 const SEEK_TOLERANCE = 1.5; // 이 이상 앞으로 점프하면 되돌림
 const SAVE_INTERVAL_MS = 15000;
 
+interface YouTubePlayer {
+  getDuration?: () => number;
+  getPlaybackRate?: () => number;
+  setPlaybackRate: (rate: number) => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
+  getPlayerState?: () => number;
+  pauseVideo: () => void;
+  destroy?: () => void;
+  getCurrentTime?: () => number;
+}
+interface YouTubeNamespace {
+  Player: new (element: HTMLElement, options: Record<string, unknown>) => YouTubePlayer;
+  PlayerState: {
+    PLAYING: number;
+    PAUSED: number;
+    ENDED: number;
+  };
+}
+interface YouTubeWindow extends Window {
+  YT?: YouTubeNamespace;
+  onYouTubeIframeAPIReady?: () => void;
+}
+
 /* ------------------------------------------------------------------ *
  * YouTube IFrame API 로더 (Pyodide 동적 로드 방식과 동일)
  * ------------------------------------------------------------------ */
-let ytApiPromise: Promise<any> | null = null;
-function loadYouTubeApi(): Promise<any> {
+let ytApiPromise: Promise<YouTubeNamespace> | null = null;
+function loadYouTubeApi(): Promise<YouTubeNamespace> {
   if (ytApiPromise) return ytApiPromise;
   ytApiPromise = new Promise((resolve) => {
-    const w = window as any;
+    const w = window as unknown as YouTubeWindow;
     if (w.YT && w.YT.Player) return resolve(w.YT);
     const prev = w.onYouTubeIframeAPIReady;
     w.onYouTubeIframeAPIReady = () => {
-      prev && prev();
-      resolve(w.YT);
+      if (prev) prev();
+      if (w.YT) resolve(w.YT);
     };
     if (!document.getElementById('yt-iframe-api')) {
       const s = document.createElement('script');
@@ -50,12 +73,17 @@ export default function VideoPlayer({
   preview,
 }: Props) {
   const restricted = !preview;
+  const isYouTube = lesson.source === 'youtube' || !!lesson.youtubeId;
+  const error = !isYouTube && !lesson.url
+    ? '영상 URL이 없습니다. 관리자에게 문의하세요.'
+    : isYouTube && !lesson.youtubeId
+      ? 'YouTube 영상 ID가 없습니다.'
+      : null;
 
   const [duration, setDuration] = useState(lesson.durationSec || initialProgress?.durationSec || 0);
   const [watchedSec, setWatchedSec] = useState(initialProgress?.watchedSec || 0);
   const [completed, setCompleted] = useState(initialProgress?.status === 'completed');
   const [toast, setToast] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   // 추적 상태 (렌더 유발 X)
   const tr = useRef({
@@ -171,14 +199,12 @@ export default function VideoPlayer({
 
   /* --------------------------- HTML5 <video> --------------------------- */
   const videoElRef = useRef<HTMLVideoElement | null>(null);
-  const isYouTube = lesson.source === 'youtube' || !!lesson.youtubeId;
 
   useEffect(() => {
     if (isYouTube) return;
     const v = videoElRef.current;
     if (!v) return;
     if (!lesson.url) {
-      setError('영상 URL이 없습니다. 관리자에게 문의하세요.');
       return;
     }
 
@@ -259,10 +285,9 @@ export default function VideoPlayer({
   useEffect(() => {
     if (!isYouTube) return;
     if (!lesson.youtubeId) {
-      setError('YouTube 영상 ID가 없습니다.');
       return;
     }
-    let player: any = null;
+    let player: YouTubePlayer | null = null;
     let poll = 0;
     let cancelled = false;
 
@@ -275,27 +300,28 @@ export default function VideoPlayer({
         playerVars: { rel: 0, modestbranding: 1, disablekb: 1, playsinline: 1 },
         events: {
           onReady: () => {
-            const d = player.getDuration?.() || 0;
+            const d = player?.getDuration?.() || 0;
             if (d) {
               setDuration(d);
               tr.current.duration = d;
             }
             if (!tr.current.resumed && tr.current.lastPos > 1) {
               tr.current.resumed = true;
-              player.seekTo(Math.min(tr.current.lastPos, tr.current.maxReached || tr.current.lastPos), true);
+              player?.seekTo(Math.min(tr.current.lastPos, tr.current.maxReached || tr.current.lastPos), true);
             }
           },
           onPlaybackRateChange: () => {
-            if (restricted && player.getPlaybackRate?.() > MAX_RATE) {
-              player.setPlaybackRate(MAX_RATE);
+            if (restricted && (player?.getPlaybackRate?.() || 1) > MAX_RATE) {
+              player?.setPlaybackRate(MAX_RATE);
               showToast('배속 재생은 제한됩니다.');
             }
           },
-          onStateChange: (e: any) => {
-            const YTP = (window as any).YT.PlayerState;
+          onStateChange: (e: { data: number }) => {
+            const YTP = (window as unknown as YouTubeWindow).YT?.PlayerState;
+            if (!YTP) return;
             if (e.data === YTP.PLAYING) {
               if (!tr.current.duration) {
-                const d = player.getDuration?.() || 0;
+                const d = player?.getDuration?.() || 0;
                 if (d) {
                   setDuration(d);
                   tr.current.duration = d;
@@ -303,13 +329,13 @@ export default function VideoPlayer({
               }
               if (!poll) {
                 poll = window.setInterval(() => {
-                  const st = player.getPlayerState?.();
+                  const st = player?.getPlayerState?.();
                   if (st !== YTP.PLAYING) return;
                   if (document.hidden) {
-                    player.pauseVideo();
+                    player?.pauseVideo();
                     return;
                   }
-                  onSample(player.getCurrentTime() || 0, (to) => player.seekTo(to, true));
+                  onSample(player?.getCurrentTime?.() || 0, (to) => player?.seekTo(to, true));
                 }, 1000) as unknown as number;
               }
             } else {
