@@ -237,25 +237,24 @@ service cloud.firestore {
 
     /* --------------------------- 팀원 명부 -------------------------- */
     match /students/{studentId} {
-      // 로그인 화면에서 본인 학번 존재 여부 확인용 get 허용, 전체 명부 열람은 인증 사용자만 허용
-      allow get: if true;
-      allow list: if signedIn();
+      // 1. 단일 조회(get)는 관리자이거나, 등록된 본인 문서인 경우만 허용
+      //    (익명 조회 거부, 타 학생 문서 조회 거부, 학번 추측을 통한 PII 조회 원천 차단)
+      allow get: if isAdmin()
+                 || (signedIn() && 'uid' in resource.data && resource.data.uid == request.auth.uid);
 
-      // 명부에 새로 추가하는 것은 관리자만 가능
+      // 2. 전체 명부 열람(list)은 오직 관리자만 허용
+      //    (일반 학생 및 익명 사용자의 명부 일괄 스크래핑 전면 차단)
+      allow list: if isAdmin();
+
+      // 3. 등록, 수정, 삭제는 오직 관리자만 허용
+      //    (미등록 학번 계정 선점, 타인 UID 바인딩, 이메일/이름 변조 원천 차단)
       allow create: if isAdmin()
                     && request.resource.data.id == studentId
                     && isValidStudent(request.resource.data);
 
-      // 수정은 관리자이거나, 학생 본인이 최초 가입 시 본인 UID를 바인딩하는 경우만 허용
-      // 학생 수정 시 uid, email 이외의 필드(id, name 등) 변경 및 권한 상승을 엄격히 차단
-      allow update: if isValidStudent(request.resource.data)
-                    && (isAdmin()
-                        || (signedIn()
-                            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'email'])
-                            && request.resource.data.uid == request.auth.uid
-                            && (!('uid' in resource.data) || resource.data.uid == request.auth.uid)
-                            && request.resource.data.id == resource.data.id
-                            && request.resource.data.name == resource.data.name));
+      allow update: if isAdmin()
+                    && isValidStudent(request.resource.data)
+                    && request.resource.data.id == resource.data.id;
 
       allow delete: if isAdmin();
     }
