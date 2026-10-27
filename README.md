@@ -4,7 +4,8 @@
 
 **동아리를 위한 학습 관리 플랫폼**
 
-영상 강의 이수 관리와 AI 채점 퀴즈를, 서버 없이 무료 티어만으로 운영합니다.
+영상 강의 이수 관리와 AI 채점 퀴즈를 제공하는 React 기반 LMS입니다.
+정적 프론트엔드와 Firebase를 사용하며, 운영 환경의 공식 채점은 별도 서버에서 처리합니다.
 
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
@@ -40,7 +41,7 @@
 | 다른 탭으로 이동 | **자동 일시정지** |
 | 끝부분만 잠깐 재생 | 누적 시청 구간이 부족해 **미이수** |
 
-시청 구간을 `[시작, 끝]` 범위로 병합해 관리하므로 **띄엄띄엄 본 시간은 합산되지 않습니다.**
+시청 구간을 `[시작, 끝]` 범위로 병합해 관리하므로 **겹치는 구간은 중복 집계하지 않습니다.**
 기본 기준은 95% 이상 시청이며 레슨별로 조정할 수 있습니다. 이어보기와 순차 잠금도 지원합니다.
 
 YouTube 링크와 직접 업로드한 mp4 **양쪽 모두** 동일한 규칙이 적용됩니다.
@@ -67,8 +68,9 @@ YouTube 링크와 직접 업로드한 mp4 **양쪽 모두** 동일한 규칙이 
 ### 🤖 AI 채점
 
 주관식 답안을 Gemini 가 채점하고 **오답 원인 · 모범 답안 · 핵심 해설**을 함께 제공합니다.
-AI 호출이 실패하면 브라우저에서 **Pyodide 로 파이썬을 실제 실행**해 채점하는 경로로 넘어갑니다.
-채점은 문항별로 병렬 처리되어 문항 수가 늘어도 대기 시간이 크게 늘지 않습니다.
+운영 환경에서는 `/api/grade-submission`을 통해 서버가 공식 성적을 산출합니다.
+서버 채점이 실패하면 답안을 보존하고 재시도를 안내합니다.
+개발 또는 Mock 모드에서는 브라우저 채점도 지원하며, AI 호출 실패 시 **Pyodide로 파이썬을 실행**하는 대체 경로를 사용합니다.
 
 ### 📚 코스 · 학습 관리
 
@@ -99,7 +101,8 @@ AI 호출이 실패하면 브라우저에서 **Pyodide 로 파이썬을 실제 �
 
 ## 🔐 보안 모델
 
-백엔드가 없는 정적 사이트지만, **권한은 클라이언트가 아니라 Firestore 규칙이 강제**합니다.
+프론트엔드는 정적 사이트로 배포하며, **Firestore 접근 권한은 보안 규칙이 강제**합니다.
+공식 성적은 인증된 채점 서버가 처리하고, 퀴즈 정답·해설은 관리자 전용 `quizAnswers` 컬렉션에 분리합니다.
 
 | 항목 | 방식 |
 |---|---|
@@ -115,7 +118,8 @@ AI 호출이 실패하면 브라우저에서 **Pyodide 로 파이썬을 실제 �
 firebase deploy --only firestore:rules
 ```
 
-여전히 남는 한계(퀴즈 정답 노출, Gemini 키 노출)와 그 이유는 [docs/SECURITY.md](docs/SECURITY.md) 에 있습니다.
+브라우저에서 수집하는 이벤트의 한계와 운영 시 점검 항목은 [docs/SECURITY.md](docs/SECURITY.md)에서 확인할 수 있습니다.
+기존 퀴즈를 운영하던 환경은 정답 분리 여부도 확인하세요. 마이그레이션 도구는 `scripts/migrate-quiz-answers.mjs`입니다.
 
 ---
 
@@ -134,10 +138,12 @@ firebase deploy --only firestore:rules
 
 ## 📦 시작하기
 
+Node.js는 Vite 8 실행 요건에 맞는 **20.x(20.19 이상) 또는 22.12 이상**을 사용하세요.
+
 ```bash
 git clone https://github.com/m1njx/test-site.git
 cd test-site
-npm install
+npm ci
 cp .env.example .env    # 값을 채워주세요
 npm run dev
 ```
@@ -150,12 +156,12 @@ npm run dev
 
 | 변수 | 설명 |
 |---|---|
-| `VITE_FIREBASE_*` | Firebase 설정 6종. 없으면 Mock 모드 |
-| `VITE_GEMINI_API_KEY` | AI 채점용 키 |
+| `VITE_FIREBASE_*` | Firebase 설정 6종. `VITE_FIREBASE_API_KEY`가 비어 있으면 Mock 모드 |
+| `VITE_GEMINI_API_KEY` | 개발 모드의 브라우저 직접 호출용 키. 운영 서버는 `GEMINI_API_KEY` 사용 |
 | `VITE_GEMINI_MODELS` | 시도할 모델 목록(쉼표 구분). 생략 시 기본값 |
 | `VITE_ADMIN_PASSWORD_HASH` | Mock 모드 관리자 게이트용 **SHA-256 해시** |
-| `VITE_VIDEO_SERVER_URL` | 자체 비디오 서버 주소 (mp4 업로드 시에만) |
-| `VITE_VIDEO_UPLOAD_TOKEN` | 업로드 토큰. **관리자 비밀번호와 반드시 다르게** |
+| `VITE_VIDEO_SERVER_URL` | 공식 채점·AI 프록시·mp4 업로드에 사용하는 서버 주소 |
+| `VITE_VIDEO_UPLOAD_TOKEN` | 일부 AI 요청에서 사용하는 레거시 토큰. 관리자 업로드는 Firebase ID 토큰 또는 관리자 키로 인증 |
 
 ```bash
 # 관리자 비밀번호 해시 만들기
@@ -163,7 +169,7 @@ printf '원하는비밀번호' | shasum -a 256
 ```
 
 > ⚠️ `VITE_` 로 시작하는 값은 **모두 빌드 결과물에 포함되어 공개**됩니다.
-> 비밀번호를 평문으로 넣지 말고, Gemini 키에는 사용량 제한을 걸어두세요.
+> 서버 전용 `GEMINI_API_KEY`, `ADMIN_API_KEY`, 서비스 계정 자격 증명은 프론트엔드 환경 변수에 넣지 마세요.
 
 ### 스크립트
 
@@ -173,6 +179,19 @@ printf '원하는비밀번호' | shasum -a 256
 | `npm run build` | 타입 검사 + 프로덕션 빌드 |
 | `npm run preview` | 빌드 결과 미리보기 |
 | `npm run lint` | ESLint |
+| `npm test` | Node.js 기반 회귀·보안 테스트 |
+| `npm run test:emulator` | Firestore 에뮬레이터에서 보안 규칙·트랜잭션 검증 |
+| `npm run test:all` | 일반 테스트와 에뮬레이터 테스트 순차 실행 |
+
+테스트를 실행하기 전에 서버 의존성도 설치하세요.
+
+```bash
+npm ci --prefix video-server
+npm test
+```
+
+에뮬레이터 테스트는 `firebase` CLI와 Java 실행 환경이 필요하며,
+`demo-aim-lms-gate` 프로젝트 ID와 로컬 `127.0.0.1:8088`을 사용합니다.
 
 ---
 
@@ -196,7 +215,9 @@ src/
     ├── CourseHome.tsx      # 코스 목록 + 진행률
     ├── CoursePlayer.tsx    # 코스 상세 (레슨 목록·잠금·이동)
     └── admin/              # 코스 빌더 · 이수 현황 · 부정행위 로그
-video-server/               # 자체 mp4 호스팅 서버 (Express + Docker)
+video-server/               # 공식 채점·AI 프록시·mp4 서버 (Express + Docker)
+tests/                      # 회귀·보안 테스트 및 Firestore 에뮬레이터 테스트
+scripts/                    # 정답 마이그레이션 등 운영 도구
 docs/                       # 설정·보안·점검 문서
 firestore.rules             # Firestore 보안 규칙
 ```
@@ -228,7 +249,10 @@ Render 정적 사이트로 배포되며 GitHub push 시 자동 빌드됩니다.
 | Environment | `.env` 와 동일한 값을 대시보드에 입력 |
 
 배포 후 Firebase 콘솔 → Authentication → Settings → **승인된 도메인**에 배포 도메인을 추가하세요.
-비디오 서버는 상시 실행 프로세스라 **별도 배포**가 필요합니다.
+채점·비디오 서버는 상시 실행 프로세스라 **별도 배포**가 필요합니다.
+Firebase를 사용하는 운영 빌드에서는 영상이 YouTube에 있어도 공식 채점 서버가 필요합니다.
+프론트엔드의 `VITE_VIDEO_SERVER_URL`과 서버의 `FIREBASE_PROJECT_ID`, `GEMINI_API_KEY`,
+Firestore 접근 자격 증명을 구성하세요. 서비스 계정은 서버의 `GOOGLE_APPLICATION_CREDENTIALS` 등으로 제공합니다.
 
 ---
 
